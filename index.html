@@ -1,0 +1,1232 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Fleet Ledger</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@600;700;800&family=IBM+Plex+Mono:wght@500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+/* Layout idea: phone-first operations ledger. Summary strip -> attention list -> tables. Bottom tab bar, sheets for data entry. Plates styled as Kenyan rear plates. */
+:root {
+  color-scheme: light;
+  --bg: #f2f4f3;
+  --surface: #ffffff;
+  --ink: #14201e;
+  --muted: #5b6866;
+  --line: #dde3e1;
+  --accent: #0f5b66;
+  --accent-ink: #ffffff;
+  --accent-soft: #e2eff0;
+  --plate: #f5c518;
+  --plate-ink: #111111;
+  --good: #1d7a3e;
+  --good-soft: #e3f3e8;
+  --warn: #9a6200;
+  --warn-soft: #fbf0d9;
+  --bad: #b3261e;
+  --bad-soft: #fbe6e4;
+  --series-1: #2a78d6;
+  --series-2: #eb6834;
+  --font-display: "Archivo", "Helvetica Neue", Arial, sans-serif;
+  --font-body: "IBM Plex Sans", "Segoe UI", Roboto, Arial, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, Menlo, Consolas, monospace;
+  --radius: 10px;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --bg: #0f1514; --surface: #182120; --ink: #e8efed; --muted: #9fb0ad; --line: #2b3735;
+    --accent: #4fb3bf; --accent-ink: #06201f; --accent-soft: #1c3335;
+    --good: #5cc282; --good-soft: #17301f; --warn: #e3ad4a; --warn-soft: #33280f; --bad: #f07b72; --bad-soft: #3a1b18;
+    --series-1: #3987e5; --series-2: #d95926;
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #0f1514; --surface: #182120; --ink: #e8efed; --muted: #9fb0ad; --line: #2b3735;
+  --accent: #4fb3bf; --accent-ink: #06201f; --accent-soft: #1c3335;
+  --good: #5cc282; --good-soft: #17301f; --warn: #e3ad4a; --warn-soft: #33280f; --bad: #f07b72; --bad-soft: #3a1b18;
+  --series-1: #3987e5; --series-2: #d95926;
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body { background: var(--bg); color: var(--ink); font: 15px/1.45 var(--font-body); -webkit-font-smoothing: antialiased; }
+button, input, select, textarea { font: inherit; color: inherit; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+h1, h2, h3 { font-family: var(--font-display); margin: 0; text-wrap: balance; letter-spacing: -0.01em; }
+h1 { font-size: 20px; font-weight: 800; }
+h2 { font-size: 17px; font-weight: 700; }
+h3 { font-size: 15px; font-weight: 700; }
+.num { font-variant-numeric: tabular-nums; }
+.muted { color: var(--muted); }
+.small { font-size: 13px; }
+
+.app { max-width: 1100px; margin: 0 auto; padding: 0 16px 96px; }
+header.top { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 16px 0 12px; }
+header.top .brand { display: flex; flex-direction: column; }
+header.top .brand span { font-size: 12px; color: var(--muted); }
+.banner { padding: 10px 12px; border-radius: var(--radius); background: var(--warn-soft); color: var(--ink); border: 1px solid var(--line); margin-bottom: 12px; font-size: 14px; }
+
+nav.tabs { position: fixed; left: 0; right: 0; bottom: 0; background: var(--surface); border-top: 1px solid var(--line); display: flex; justify-content: center; z-index: 20; padding-bottom: env(safe-area-inset-bottom); }
+nav.tabs .inner { display: grid; grid-template-columns: repeat(5, 1fr); width: 100%; max-width: 600px; }
+nav.tabs a { text-decoration: none; color: var(--muted); display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 8px 4px 10px; font-size: 12px; font-weight: 500; }
+nav.tabs a svg { width: 22px; height: 22px; }
+nav.tabs a.on { color: var(--accent); }
+
+.section { margin: 16px 0; display: flex; flex-direction: column; gap: 10px; }
+.section-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 14px; }
+.grid { display: grid; gap: 10px; }
+.kpis { grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); }
+.kpi .label { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; font-weight: 600; }
+.kpi .value { font-family: var(--font-display); font-size: 24px; font-weight: 700; margin-top: 2px; }
+.kpi .sub { font-size: 13px; color: var(--muted); }
+.meter { height: 6px; background: var(--line); border-radius: 3px; overflow: hidden; margin-top: 8px; }
+.meter > i { display: block; height: 100%; background: var(--accent); border-radius: 3px; }
+
+.seg { display: inline-flex; background: var(--surface); border: 1px solid var(--line); border-radius: 999px; padding: 3px; gap: 2px; flex-wrap: wrap; }
+.seg button { border: 0; background: transparent; padding: 5px 12px; border-radius: 999px; cursor: pointer; font-size: 13px; font-weight: 500; color: var(--muted); }
+.seg button.on { background: var(--accent); color: var(--accent-ink); }
+
+.btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; border: 1px solid var(--line); background: var(--surface); padding: 8px 14px; border-radius: 8px; cursor: pointer; font-weight: 600; font-size: 14px; text-decoration: none; color: var(--ink); }
+.btn.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+.btn.danger { color: var(--bad); }
+.btn.sm { padding: 5px 10px; font-size: 13px; }
+.btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.row-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+
+.plate { display: inline-block; font-family: var(--font-mono); font-weight: 600; font-size: 13px; background: var(--plate); color: var(--plate-ink); padding: 1px 7px; border-radius: 4px; border: 1.5px solid #222; letter-spacing: 0.04em; white-space: nowrap; }
+.pill { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; font-weight: 600; padding: 2px 8px; border-radius: 999px; white-space: nowrap; }
+.pill::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+.pill.good { background: var(--good-soft); color: var(--good); }
+.pill.warn { background: var(--warn-soft); color: var(--warn); }
+.pill.bad { background: var(--bad-soft); color: var(--bad); }
+.pill.neutral { background: var(--accent-soft); color: var(--accent); }
+
+.alerts { display: flex; flex-direction: column; gap: 6px; }
+.alert { display: flex; gap: 10px; align-items: flex-start; padding: 10px 12px; border-radius: 8px; background: var(--surface); border: 1px solid var(--line); border-left: 4px solid var(--warn); }
+.alert.bad { border-left-color: var(--bad); }
+.alert .what { font-weight: 600; }
+.alert .why { font-size: 13px; color: var(--muted); }
+
+.table-wrap { overflow-x: auto; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); }
+table { width: 100%; border-collapse: collapse; font-size: 14px; }
+th, td { padding: 9px 10px; text-align: left; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { font-size: 12px; color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: 0.03em; white-space: nowrap; background: var(--surface); }
+td.r, th.r { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+tr:last-child td { border-bottom: 0; }
+tr.click { cursor: pointer; }
+tr.click:hover td { background: var(--accent-soft); }
+
+.list { display: flex; flex-direction: column; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); }
+.li { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 11px 12px; border-bottom: 1px solid var(--line); }
+.li:last-child { border-bottom: 0; }
+.li .main { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.li .main .t { font-weight: 600; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.li .end { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; text-align: right; }
+
+.empty { padding: 24px 16px; text-align: center; color: var(--muted); }
+.steps { display: grid; gap: 10px; }
+.step { display: flex; gap: 12px; align-items: flex-start; }
+.step b.n { flex: 0 0 26px; height: 26px; border-radius: 50%; background: var(--accent); color: var(--accent-ink); display: grid; place-items: center; font-size: 13px; }
+
+.fab { position: fixed; right: max(16px, calc(50% - 534px)); bottom: 78px; z-index: 21; width: 56px; height: 56px; border-radius: 50%; border: 0; background: var(--accent); color: var(--accent-ink); font-size: 28px; line-height: 1; cursor: pointer; box-shadow: 0 6px 18px rgba(0,0,0,0.22); }
+
+.chart { width: 100%; height: auto; display: block; }
+.chart text { fill: var(--muted); font-size: 11px; font-family: var(--font-body); }
+.legend { display: flex; gap: 14px; font-size: 13px; color: var(--muted); }
+.legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 5px; vertical-align: -1px; }
+.tip { position: fixed; pointer-events: none; background: var(--ink); color: var(--bg); padding: 6px 9px; border-radius: 6px; font-size: 12px; z-index: 50; display: none; white-space: nowrap; }
+
+/* Sheet */
+.scrim { position: fixed; inset: 0; background: rgba(0,0,0,0.42); z-index: 40; display: none; }
+.scrim.open { display: block; }
+.sheet { position: fixed; left: 50%; bottom: 0; transform: translateX(-50%); width: 100%; max-width: 560px; max-height: 92%; overflow-y: auto; background: var(--surface); border-radius: 16px 16px 0 0; z-index: 41; padding: 18px 16px calc(18px + env(safe-area-inset-bottom)); display: none; }
+.sheet.open { display: block; }
+.sheet .head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; gap: 8px; }
+.sheet .x { border: 0; background: transparent; font-size: 22px; cursor: pointer; color: var(--muted); padding: 4px 8px; }
+form.f { display: grid; gap: 12px; }
+form.f .two { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+label.fl { display: flex; flex-direction: column; gap: 4px; font-size: 13px; font-weight: 600; color: var(--muted); }
+label.fl input, label.fl select, label.fl textarea { font-weight: 400; color: var(--ink); background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 9px 10px; font-size: 15px; width: 100%; }
+label.ck { display: flex; gap: 8px; align-items: center; font-size: 14px; }
+.hint { font-size: 12px; color: var(--muted); font-weight: 400; }
+.err { color: var(--bad); font-size: 13px; }
+pre.stmt { white-space: pre-wrap; background: var(--bg); border: 1px solid var(--line); padding: 12px; border-radius: 8px; font-family: var(--font-mono); font-size: 12.5px; margin: 0; }
+.toast { position: fixed; left: 50%; transform: translateX(-50%); bottom: 90px; background: var(--ink); color: var(--bg); padding: 9px 14px; border-radius: 8px; z-index: 60; font-size: 14px; display: none; }
+.detail-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; }
+.detail-grid > div > span:first-child { display: block; font-size: 12px; color: var(--muted); }
+.detail-grid div b { font-variant-numeric: tabular-nums; }
+@media (max-width: 420px) { form.f .two { grid-template-columns: 1fr; } .kpi .value { font-size: 21px; } }
+@media (prefers-reduced-motion: no-preference) { .sheet.open { animation: up .18s ease-out; } @keyframes up { from { transform: translate(-50%, 24px); opacity: .6; } to { transform: translate(-50%, 0); opacity: 1; } } }
+</style>
+</head>
+<body>
+<div class="app">
+  <header class="top">
+    <div class="brand"><h1 id="biz-name">Fleet Ledger</h1><span id="today-label"></span></div>
+    <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px"><div id="sync" class="small muted">Connecting…</div><button class="btn sm" id="signout" style="display:none" data-action="signout">Sign out</button></div>
+  </header>
+  <div id="banner"></div>
+  <main id="view"><div class="empty">Loading fleet data…</div></main>
+</div>
+
+<button class="fab" id="fab" aria-label="Add a record" data-action="quick-add">+</button>
+
+<nav class="tabs" aria-label="Sections"><div class="inner">
+  <a href="#home" data-tab="home"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12l9-8 9 8M5 10v10h14V10"/></svg>Dashboard</a>
+  <a href="#collect" data-tab="collect"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="6" width="18" height="12" rx="2"/><circle cx="12" cy="12" r="2.5"/></svg>Collect</a>
+  <a href="#cars" data-tab="cars"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 16V11l2-5h10l2 5v5M3 16h18M7 19v-3M17 19v-3"/><circle cx="7.5" cy="13" r="1"/><circle cx="16.5" cy="13" r="1"/></svg>Cars</a>
+  <a href="#drivers" data-tab="drivers"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 4-6 8-6s8 2 8 6"/></svg>Drivers</a>
+  <a href="#more" data-tab="more"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 6h16M4 12h16M4 18h16"/></svg>Records</a>
+</div></nav>
+
+<div class="scrim" id="scrim"></div>
+<div class="sheet" id="sheet" role="dialog" aria-modal="true" aria-labelledby="sheet-title"></div>
+<div class="tip" id="tip"></div>
+<div class="toast" id="toast"></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+<script>
+/* ===== STEP 1 OF SETUP: paste your Firebase web app config here (Firebase console > Project settings > Your apps). =====
+   These values are not secret. Your data is protected by the Firestore security rules (firestore.rules). */
+const FIREBASE_CONFIG = {
+  apiKey: "AIzaSyAHeTfoij4THlwxjfrRMlR3lFXWM4bo654",
+  authDomain: "fleet-management-6b879.firebaseapp.com",
+  projectId: "fleet-management-6b879",
+  storageBucket: "fleet-management-6b879.firebasestorage.app",
+  messagingSenderId: "162046459927",
+  appId: "1:162046459927:web:d25fee5d8af897cb329c52"
+};
+</script>
+<script>
+"use strict";
+/* ============ Constants ============ */
+const TZ = "Africa/Nairobi";
+const DAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+const EXPENSE_CATS = ["Service", "Repairs & parts", "Tyres", "Insurance", "Inspection & licences", "Tracker", "Platform fees", "Fines & penalties", "Accident damage", "Car wash & other"];
+const DOWN_REASONS = [
+  { v: "Service / repair", excused: true },
+  { v: "Accident", excused: true },
+  { v: "No driver assigned", excused: true },
+  { v: "Platform suspension", excused: true },
+  { v: "Driver absent", excused: false },
+  { v: "Other", excused: true }
+];
+const METHODS = ["M-Pesa Till", "M-Pesa Paybill", "M-Pesa (personal)", "Cash", "Bank"];
+const DEFAULT_SETTINGS = { name: "Fleet Ledger", trackStart: "", warnDays: 30, arrearsDays: 2, serviceWarnKm: 500, serviceIntervalKm: 5000 };
+
+/* ============ Date & format helpers ============ */
+const todayStr = () => new Intl.DateTimeFormat("en-CA", { timeZone: TZ, year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
+const toUTC = s => { const [y, m, d] = s.split("-").map(Number); return Date.UTC(y, m - 1, d); };
+const fromUTC = t => new Date(t).toISOString().slice(0, 10);
+const addDays = (s, n) => fromUTC(toUTC(s) + n * 86400000);
+const dayDiff = (a, b) => Math.round((toUTC(b) - toUTC(a)) / 86400000);
+const weekday = s => new Date(toUTC(s)).getUTCDay();
+const monthOf = s => s.slice(0, 7);
+const monthStart = m => m + "-01";
+const monthEnd = m => { const [y, mo] = m.split("-").map(Number); return fromUTC(Date.UTC(y, mo, 0)); };
+const addMonths = (m, n) => { const [y, mo] = m.split("-").map(Number); const d = new Date(Date.UTC(y, mo - 1 + n, 1)); return d.toISOString().slice(0, 7); };
+function monthsBetween(a, b) { const out = []; let m = a; while (m <= b) { out.push(m); m = addMonths(m, 1); } return out; }
+const MONTHS_SHORT = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+const fmtMonth = m => MONTHS_SHORT[Number(m.slice(5, 7)) - 1] + " " + m.slice(0, 4);
+const fmtDate = s => s ? Number(s.slice(8, 10)) + " " + MONTHS_SHORT[Number(s.slice(5, 7)) - 1] + " " + s.slice(0, 4) : "—";
+const fmtShort = s => s ? Number(s.slice(8, 10)) + " " + MONTHS_SHORT[Number(s.slice(5, 7)) - 1] : "—";
+const ksh = n => (n < 0 ? "−" : "") + "KSh " + Math.round(Math.abs(n || 0)).toLocaleString("en-KE");
+const kshShort = n => { const a = Math.abs(n); const s = a >= 1e6 ? (a / 1e6).toFixed(a >= 1e7 ? 0 : 1) + "M" : a >= 1e3 ? Math.round(a / 1e3) + "k" : Math.round(a) + ""; return (n < 0 ? "−" : "") + s; };
+const pct = x => isFinite(x) ? Math.round(x * 100) + "%" : "—";
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const normPlate = s => String(s || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+const digits = s => String(s || "").replace(/\D/g, "");
+const phoneKey = s => { const d = digits(s); return d.length >= 9 ? d.slice(-9) : ""; };
+const num = v => { const n = Number(String(v ?? "").replace(/[^0-9.\-]/g, "")); return isFinite(n) ? n : 0; };
+
+/* ============ State ============ */
+const S = {
+  db: null, user: null, canWrite: true,
+  cars: [], drivers: [], assigns: [], settings: { ...DEFAULT_SETTINGS },
+  months: {},          // "YYYY-MM" -> {payments:[], expenses:[], downtime:[], odo:[]}
+  loadedMonths: new Set(), subs: [], coreReady: { cars: false, drivers: false, assigns: false, settings: false },
+  period: "month", view: "home", detail: null, calc: null
+};
+const KINDS = ["payments", "expenses", "downtime", "odo"];
+const all = kind => Object.values(S.months).flatMap(m => m[kind] || []);
+const carById = id => S.cars.find(c => c.id === id);
+const driverById = id => S.drivers.find(d => d.id === id);
+const carLabel = id => { const c = carById(id); return c ? c.plate : "Unknown car"; };
+const driverName = id => { const d = driverById(id); return d ? d.name : "Unknown driver"; };
+function trackStart() { return S.settings.trackStart || monthStart(monthOf(todayStr())); }
+
+function assignOn(carId, date) {
+  return S.assigns.find(a => a.carId === carId && a.start <= date && (!a.end || a.end >= date));
+}
+function driverAssignOn(driverId, date) {
+  return S.assigns.find(a => a.driverId === driverId && a.start <= date && (!a.end || a.end >= date));
+}
+function currentAssignForDriver(id) { return driverAssignOn(id, todayStr()); }
+function currentAssignForCar(id) { return assignOn(id, todayStr()); }
+
+/* ============ Calculation engine ============ */
+function periodRange(p) {
+  const T = todayStr(), m = monthOf(T), ts = trackStart();
+  if (p === "month") return { from: monthStart(m), to: T, label: fmtMonth(m) + " to date" };
+  if (p === "last") { const lm = addMonths(m, -1); return { from: monthStart(lm), to: monthEnd(lm), label: fmtMonth(lm) }; }
+  if (p === "ytd") return { from: T.slice(0, 4) + "-01-01", to: T, label: "Year to date" };
+  return { from: ts, to: T, label: "Since " + fmtDate(ts) };
+}
+
+function compute() {
+  const T = todayStr(), TS = trackStart();
+  const P = periodRange(S.period);
+  const from = P.from < TS ? TS : P.from, to = P.to;
+  const inP = d => d >= from && d <= to;
+
+  // downtime map: carId -> Map(date -> {excused, reason})
+  const down = {};
+  for (const x of all("downtime")) {
+    if (!x.carId || !x.from) continue;
+    const end = x.to && x.to < T ? x.to : (x.to || T) > T ? T : (x.to || T);
+    const m = down[x.carId] || (down[x.carId] = new Map());
+    for (let d = x.from; d <= end; d = addDays(d, 1)) {
+      const prev = m.get(d);
+      // an unexcused entry wins only if no excused entry covers the day
+      if (!prev || (!prev.excused && x.excused !== false)) m.set(d, { excused: x.excused !== false, reason: x.reason });
+    }
+  }
+
+  const ds = {}, cs = {}, fleetM = {};
+  const dInit = id => ds[id] || (ds[id] = { expAll: 0, expP: 0, payAll: 0, payP: 0, chgAll: 0, chgP: 0, lastPay: null });
+  const cInit = id => cs[id] || (cs[id] = { expP: 0, revP: 0, revAll: 0, costP: 0, costAll: 0, earnP: 0, denomP: 0, downP: 0, idleP: 0, kmP: 0, revM: {}, costM: {} });
+  const fInit = m => fleetM[m] || (fleetM[m] = { rev: 0, cost: 0, exp: 0 });
+  S.drivers.forEach(d => dInit(d.id));
+  S.cars.forEach(c => cInit(c.id));
+
+  // Day loop per car
+  for (const c of S.cars) {
+    const st = c.inServiceDate && c.inServiceDate > TS ? c.inServiceDate : TS;
+    const en = c.soldDate && c.soldDate < T ? c.soldDate : T;
+    const cst = cs[c.id], dm = down[c.id];
+    for (let d = st; d <= en; d = addDays(d, 1)) {
+      const a = assignOn(c.id, d);
+      if (a && a.restDay !== "" && a.restDay != null && Number(a.restDay) === weekday(d)) continue;
+      const dn = dm && dm.get(d);
+      const p = inP(d);
+      if (p) { cst.denomP++; if (dn) cst.downP++; else if (!a) cst.idleP++; }
+      if (a) {
+        const rate = Number(a.rate) || 0;
+        if (!(dn && dn.excused)) {
+          const dst = dInit(a.driverId);
+          dst.expAll += rate;
+          fInit(monthOf(d)).exp += rate;
+          if (p) { dst.expP += rate; cst.expP += rate; }
+        }
+        if (!dn && p) cst.earnP++;
+      }
+    }
+  }
+  for (const x of all("payments")) {
+    if (x.date < TS) continue;
+    const amt = Number(x.amount) || 0, dst = dInit(x.driverId);
+    dst.payAll += amt;
+    if (!dst.lastPay || x.date > dst.lastPay) dst.lastPay = x.date;
+    if (inP(x.date)) dst.payP += amt;
+    fInit(monthOf(x.date)).rev += amt;
+    if (x.carId) { const c = cInit(x.carId); c.revAll += amt; c.revM[monthOf(x.date)] = (c.revM[monthOf(x.date)] || 0) + amt; if (inP(x.date)) c.revP += amt; }
+  }
+  for (const x of all("expenses")) {
+    if (x.date < TS) continue;
+    const amt = Number(x.amount) || 0;
+    fInit(monthOf(x.date)).cost += amt;
+    if (x.carId) { const c = cInit(x.carId); c.costAll += amt; c.costM[monthOf(x.date)] = (c.costM[monthOf(x.date)] || 0) + amt; if (inP(x.date)) c.costP += amt; }
+    if (x.chargeDriver && x.driverId) { const dst = dInit(x.driverId); dst.chgAll += amt; if (inP(x.date)) dst.chgP += amt; }
+  }
+  // Odometer
+  const odoBy = {};
+  for (const x of all("odo")) (odoBy[x.carId] || (odoBy[x.carId] = [])).push({ date: x.date, km: Number(x.km) || 0 });
+  for (const x of all("expenses")) if (x.odometer && x.carId) (odoBy[x.carId] || (odoBy[x.carId] = [])).push({ date: x.date, km: Number(x.odometer) || 0 });
+  const odoInfo = {};
+  for (const c of S.cars) {
+    const r = (odoBy[c.id] || []).sort((a, b) => a.date < b.date ? -1 : a.date > b.date ? 1 : a.km - b.km);
+    const last = r[r.length - 1];
+    const before = r.filter(x => x.date < from).pop();
+    const inside = r.filter(x => inP(x.date));
+    let kmP = 0;
+    if (inside.length) { const base = before ? before.km : inside[0].km; kmP = Math.max(0, inside[inside.length - 1].km - base); }
+    cs[c.id].kmP = kmP;
+    const svc = all("expenses").filter(x => x.carId === c.id && x.category === "Service" && x.odometer).map(x => Number(x.odometer));
+    const lastService = Math.max(Number(c.lastServiceKm) || 0, ...svc, 0);
+    odoInfo[c.id] = { lastKm: last ? last.km : null, lastDate: last ? last.date : null, lastService };
+  }
+
+  // Driver balances
+  const drivers = S.drivers.map(d => {
+    const s = ds[d.id], a = currentAssignForDriver(d.id);
+    const balance = (Number(d.openingBalance) || 0) + s.expAll + s.chgAll - s.payAll;
+    const rate = a ? Number(a.rate) || 0 : 0;
+    const daysBehind = rate ? balance / rate : 0;
+    let status = "good", statusLabel = "Up to date";
+    if (balance < -1) { status = "good"; statusLabel = "In credit"; }
+    else if (balance > 1) { if (daysBehind > Number(S.settings.arrearsDays || 2)) { status = "bad"; statusLabel = "In arrears"; } else { status = "warn"; statusLabel = "Slightly behind"; } }
+    return { ...d, ...s, balance, rate, daysBehind, assign: a, status, statusLabel, collRateP: s.expP + s.chgP ? s.payP / (s.expP + s.chgP) : NaN };
+  });
+
+  // Car rows
+  const cars = S.cars.map(c => {
+    const s = cs[c.id], a = currentAssignForCar(c.id), o = odoInfo[c.id];
+    const net = s.revP - s.costP, netAll = s.revAll - s.costAll;
+    const price = Number(c.purchasePrice) || 0;
+    const recentMs = [1, 2, 3].map(i => addMonths(monthOf(T), -i));
+    const avgNet = recentMs.reduce((t, m) => t + (s.revM[m] || 0) - (s.costM[m] || 0), 0) / 3;
+    const remain = price - netAll;
+    const today = down[c.id] && down[c.id].get(T);
+    let status = "good", statusLabel = "On the road";
+    if (c.soldDate && c.soldDate <= T) { status = "neutral"; statusLabel = "Sold"; }
+    else if (today) { status = "bad"; statusLabel = "Off road · " + today.reason; }
+    else if (!a) { status = "warn"; statusLabel = "No driver"; }
+    else if (a.restDay !== "" && a.restDay != null && Number(a.restDay) === weekday(T)) { status = "neutral"; statusLabel = "Rest day"; }
+    return {
+      ...c, ...s, assign: a, driver: a ? driverById(a.driverId) : null, net, netAll, price,
+      util: s.denomP ? s.earnP / s.denomP : NaN, collRate: s.expP ? s.revP / s.expP : NaN,
+      payback: price ? netAll / price : NaN, monthsLeft: price && remain > 0 && avgNet > 0 ? remain / avgNet : (price && remain <= 0 ? 0 : NaN),
+      costPerKm: s.kmP ? s.costP / s.kmP : NaN, odo: o, status, statusLabel, downToday: today
+    };
+  });
+
+  // Today
+  const todayRows = [];
+  for (const a of S.assigns.filter(a => a.start <= T && (!a.end || a.end >= T))) {
+    const car = carById(a.carId); if (!car) continue;
+    const isRest = a.restDay !== "" && a.restDay != null && Number(a.restDay) === weekday(T);
+    const dn = down[a.carId] && down[a.carId].get(T);
+    const due = isRest || (dn && dn.excused) ? 0 : Number(a.rate) || 0;
+    const paid = all("payments").filter(p => p.driverId === a.driverId && p.date === T).reduce((t, p) => t + (Number(p.amount) || 0), 0);
+    todayRows.push({ a, car, driver: driverById(a.driverId), due, paid, isRest, dn });
+  }
+
+  // Fleet totals for period
+  const tot = cars.reduce((t, c) => { t.rev += c.revP; t.cost += c.costP; t.exp += c.expP; t.earn += c.earnP; t.denom += c.denomP; return t; }, { rev: 0, cost: 0, exp: 0, earn: 0, denom: 0 });
+  // payments with no car still count as revenue
+  const unassignedRev = all("payments").filter(p => !p.carId && inP(p.date) && p.date >= TS).reduce((t, p) => t + (Number(p.amount) || 0), 0);
+  tot.rev += unassignedRev;
+  tot.net = tot.rev - tot.cost;
+  tot.arrears = drivers.filter(d => d.balance > 0).reduce((t, d) => t + d.balance, 0);
+  tot.charges = drivers.reduce((t, d) => t + d.chgP, 0);
+
+  // Alerts
+  const alerts = [];
+  const W = Number(S.settings.warnDays) || 30;
+  const docCheck = (date, what, who, link) => {
+    if (!date) return;
+    const left = dayDiff(T, date);
+    if (left < 0) alerts.push({ sev: "bad", what: `${what} expired`, why: `${who} · expired ${fmtDate(date)}`, link, sort: left });
+    else if (left <= W) alerts.push({ sev: left <= 7 ? "bad" : "warn", what: `${what} due in ${left} day${left === 1 ? "" : "s"}`, why: `${who} · ${fmtDate(date)}`, link, sort: left });
+  };
+  for (const c of cars) {
+    if (c.soldDate && c.soldDate <= T) continue;
+    docCheck(c.insuranceExpiry, "Insurance", c.plate, "car:" + c.id);
+    docCheck(c.inspectionExpiry, "NTSA inspection", c.plate, "car:" + c.id);
+    docCheck(c.tncExpiry, "PSV / platform licence", c.plate, "car:" + c.id);
+    docCheck(c.trackerExpiry, "Tracker subscription", c.plate, "car:" + c.id);
+    const iv = Number(c.serviceIntervalKm) || Number(S.settings.serviceIntervalKm) || 5000;
+    if (c.odo.lastKm != null && c.odo.lastService) {
+      const since = c.odo.lastKm - c.odo.lastService, left = iv - since;
+      if (left <= (Number(S.settings.serviceWarnKm) || 500)) alerts.push({ sev: left < 0 ? "bad" : "warn", what: left < 0 ? `Service overdue by ${Math.abs(left).toLocaleString()} km` : `Service due in ${left.toLocaleString()} km`, why: `${c.plate} · ${c.odo.lastKm.toLocaleString()} km now, last service at ${c.odo.lastService.toLocaleString()} km`, link: "car:" + c.id, sort: left / 100 });
+    }
+    if (c.assign && (!c.odo.lastDate || dayDiff(c.odo.lastDate, T) > 8)) alerts.push({ sev: "warn", what: "Mileage not recorded this week", why: `${c.plate} · last reading ${c.odo.lastDate ? fmtDate(c.odo.lastDate) : "never"}`, link: "car:" + c.id, sort: 50 });
+    if (!c.assign && !c.downToday) alerts.push({ sev: "warn", what: "Car has no driver", why: `${c.plate} is earning nothing`, link: "car:" + c.id, sort: 5 });
+  }
+  for (const d of drivers) {
+    if (d.status === "bad") alerts.push({ sev: "bad", what: `${d.name} owes ${ksh(d.balance)}`, why: `About ${d.daysBehind.toFixed(1)} days of payments behind`, link: "driver:" + d.id, sort: -d.daysBehind });
+    docCheck(d.licenseExpiry, "Driving licence", d.name, "driver:" + d.id);
+    docCheck(d.psvBadgeExpiry, "PSV badge", d.name, "driver:" + d.id);
+  }
+  alerts.sort((a, b) => (a.sev === b.sev ? 0 : a.sev === "bad" ? -1 : 1) || a.sort - b.sort);
+
+  // Trend: last 6 months
+  const curM = monthOf(T);
+  const trend = monthsBetween(addMonths(curM, -5), curM).filter(m => m >= monthOf(TS)).map(m => ({ m, ...(fleetM[m] || { rev: 0, cost: 0, exp: 0 }) }));
+
+  return { T, P: { ...P, from }, drivers, cars, todayRows, tot, alerts, trend, down };
+}
+
+/* ============ Data layer ============ */
+function monthBucket(m) { return S.months[m] || (S.months[m] = { payments: [], expenses: [], downtime: [], odo: [] }); }
+const snapRows = snap => snap.docs.map(d => ({ id: d.id, ...d.data() }));
+
+async function boot() {
+  document.getElementById("today-label").textContent = fmtDate(todayStr());
+  if (!window.firebase || FIREBASE_CONFIG.apiKey.startsWith("PASTE")) {
+    setSync("Not set up");
+    document.getElementById("view").innerHTML = `<div class="card"><h2>Almost there</h2><p class="muted">Paste your Firebase config into index.html (search for FIREBASE_CONFIG). The README explains each step.</p></div>`;
+    return;
+  }
+  firebase.initializeApp(FIREBASE_CONFIG);
+  const fs = firebase.firestore();
+  try { fs.settings({ ignoreUndefinedProperties: true, merge: true }); } catch (e) {}
+  try { await fs.enablePersistence({ synchronizeTabs: true }); } catch (e) {} // works offline on patchy networks
+  firebase.auth().onAuthStateChanged(u => {
+    if (!u) { setSync("Signed out"); document.getElementById("signout").style.display = "none"; document.getElementById("fab").style.display = "none"; viewLogin(); return; }
+    document.getElementById("signout").style.display = "";
+    S.user = u;
+    startData(fs);
+  });
+}
+
+function viewLogin(msg) {
+  document.getElementById("view").innerHTML = `<div class="card" style="max-width:420px;margin:24px auto">
+    <h2 style="margin-bottom:6px">Sign in</h2><p class="small muted" style="margin-top:0">Use the email and password the fleet owner set up for you.</p>
+    <form class="f" id="login-form" novalidate>
+      <label class="fl" for="login-email">Email<input id="login-email" type="email" autocomplete="username" required></label>
+      <label class="fl" for="login-pass">Password<input id="login-pass" type="password" autocomplete="current-password" required></label>
+      <div class="err" id="login-err">${esc(msg || "")}</div>
+      <div class="row-actions"><button class="btn primary" type="submit">Sign in</button><button class="btn" type="button" data-action="reset-pass">Forgot password</button></div>
+    </form></div>`;
+}
+
+function authMsg(e) {
+  const c = e && e.code || "";
+  if (/wrong-password|invalid-credential|user-not-found|invalid-email/.test(c)) return "Email or password is wrong.";
+  if (/too-many-requests/.test(c)) return "Too many tries. Wait a few minutes and try again.";
+  if (/network/.test(c)) return "No internet connection.";
+  return "Couldn't sign in (" + c + ").";
+}
+
+function startData(db) {
+  if (S.db) return;
+  S.db = db;
+  const timer = setTimeout(() => setSync("Can't reach the data yet. Check your connection."), 10000);
+  const onErr = e => {
+    clearTimeout(timer);
+    if (e && e.code === "permission-denied") {
+      document.getElementById("view").innerHTML = `<div class="card"><h2>No access yet</h2><p class="muted">${esc(S.user.email)} isn't on the family list. Ask the fleet owner to add your email to the Firestore rules.</p></div>`;
+      setSync("No access");
+    } else setSync("Data unavailable: " + (e && e.code || "error"));
+  };
+  const synced = snap => setSync(snap.metadata.fromCache ? "Saved copy (offline)" : "Up to date");
+  const core = (name, coll, key) => S.subs.push(db.collection(coll).onSnapshot(snap => {
+    clearTimeout(timer);
+    S[key] = snapRows(snap);
+    S.coreReady[name] = true;
+    synced(snap);
+    afterCore();
+  }, onErr));
+  core("cars", "cars", "cars");
+  core("drivers", "drivers", "drivers");
+  core("assigns", "assignments", "assigns");
+  S.subs.push(db.doc("settings/main").onSnapshot(snap => {
+    S.settings = { ...DEFAULT_SETTINGS, ...(snap.exists ? snap.data() : {}) };
+    S.coreReady.settings = true;
+    document.getElementById("biz-name").textContent = S.settings.name || "Fleet Ledger";
+    afterCore();
+  }, onErr));
+}
+
+function afterCore() {
+  if (!Object.values(S.coreReady).every(Boolean)) return;
+  const T = todayStr();
+  const months = monthsBetween(monthOf(trackStart()), monthOf(T));
+  const live = new Set(months.slice(-12));
+  for (const m of months) {
+    if (S.loadedMonths.has(m)) continue;
+    S.loadedMonths.add(m);
+    monthBucket(m);
+    for (const k of KINDS) {
+      const col = S.db.collection(`months/${m}/${k}`);
+      if (live.has(m)) S.subs.push(col.onSnapshot(snap => { monthBucket(m)[k] = snapRows(snap); render(); }, e => setSync("Data unavailable: " + e.code)));
+      else col.get().then(snap => { monthBucket(m)[k] = snapRows(snap); render(); }).catch(() => {});
+    }
+  }
+  render();
+}
+
+async function refreshMonth(m, kind) {
+  if (!S.loadedMonths.has(m)) { afterCore(); return; }
+  try { const snap = await S.db.collection(`months/${m}/${kind}`).get(); monthBucket(m)[kind] = snapRows(snap); render(); } catch (e) {}
+}
+
+function setSync(t) { document.getElementById("sync").textContent = t; }
+
+async function save(fn, okMsg) {
+  if (!S.canWrite) { toast("You have view-only access"); return false; }
+  try {
+    // Firestore saves to the phone first and syncs later; don't wait forever on a weak network
+    const r = await Promise.race([fn().then(() => "ok"), new Promise(res => setTimeout(() => res("queued"), 5000))]);
+    toast(r === "queued" ? "Saved on this phone. It will sync when the network is back." : okMsg || "Saved");
+    return true;
+  }
+  catch (e) {
+    const c = e && e.code;
+    if (c === "permission-denied") { toast("Not saved: your account isn't allowed to change data"); }
+    else if (c === "resource-exhausted") toast("Not saved: the free daily limit was reached. Try again tomorrow.");
+    else toast("Not saved, please try again (" + (c || "error") + ")");
+    return false;
+  }
+}
+
+function recordId(ref) { const r = String(ref || "").toUpperCase().replace(/[^A-Z0-9]/g, ""); return r.length >= 6 ? r : null; }
+async function writeRecord(kind, data, oldRec) {
+  const m = monthOf(data.date || data.from);
+  const id = oldRec ? oldRec.id : (kind === "payments" && recordId(data.ref)) || undefined;
+  const oldM = oldRec ? monthOf(oldRec.date || oldRec.from) : null;
+  const col = S.db.collection(`months/${m}/${kind}`);
+  await (id ? col.doc(id) : col.doc()).set({ ...data, updatedAt: new Date().toISOString() });
+  if (oldRec && oldM !== m) await S.db.collection(`months/${oldM}/${kind}`).doc(oldRec.id).delete();
+  refreshMonth(m, kind); if (oldM && oldM !== m) refreshMonth(oldM, kind);
+}
+async function deleteRecord(kind, rec) {
+  const m = monthOf(rec.date || rec.from);
+  await S.db.collection(`months/${m}/${kind}`).doc(rec.id).delete();
+  refreshMonth(m, kind);
+}
+
+/* ============ Rendering ============ */
+function render() {
+  if (!S.db || !Object.values(S.coreReady).every(Boolean)) return;
+  S.calc = compute();
+  const v = document.getElementById("view");
+  const map = { home: viewHome, collect: viewCollect, cars: viewCars, drivers: viewDrivers, more: viewMore, import: viewImport, settings: viewSettings };
+  const fn = map[S.view] || viewHome;
+  const scrollY = window.scrollY;
+  v.innerHTML = fn(S.calc);
+  window.scrollTo(0, scrollY);
+  document.querySelectorAll("nav.tabs a").forEach(a => a.classList.toggle("on", a.dataset.tab === S.view || (S.view === "import" || S.view === "settings") && a.dataset.tab === "more"));
+  document.getElementById("banner").innerHTML = S.canWrite ? "" : `<div class="banner">You can view this ledger but not change it. Ask the owner to share it with you as an Editor.</div>`;
+  document.getElementById("fab").style.display = S.canWrite && S.cars.length ? "" : "none";
+  bindChart();
+}
+
+const plate = p => `<span class="plate">${esc(p)}</span>`;
+const pill = (cls, t) => `<span class="pill ${cls}">${esc(t)}</span>`;
+const periodSeg = () => `<div class="seg" role="group" aria-label="Period">${[["month", "This month"], ["last", "Last month"], ["ytd", "Year"], ["all", "All time"]].map(([k, l]) => `<button data-action="period" data-v="${k}" class="${S.period === k ? "on" : ""}">${l}</button>`).join("")}</div>`;
+
+function onboarding() {
+  const hasCar = S.cars.length > 0, hasDriver = S.drivers.length > 0, hasAssign = S.assigns.length > 0;
+  const step = (n, done, t, d, action, label) => `<div class="step"><b class="n">${done ? "✓" : n}</b><div style="flex:1"><h3>${t}</h3><div class="small muted">${d}</div>${!done && action ? `<div style="margin-top:6px"><button class="btn primary sm" data-action="${action}">${label}</button></div>` : ""}</div></div>`;
+  return `<div class="card"><h2 style="margin-bottom:10px">Set up your fleet</h2><div class="steps">
+    ${step(1, !!S.settings.trackStart, "Choose your start date", "Balances and profit are counted from this date. Use the 1st of the month you start recording.", "edit-settings", "Open settings")}
+    ${step(2, hasCar, "Add each car", "Plate, purchase price and document expiry dates.", "new-car", "Add a car")}
+    ${step(3, hasDriver, "Add each driver", "Name, M-Pesa phone number, and any balance they already owe.", "new-driver", "Add a driver")}
+    ${step(4, hasAssign, "Assign drivers to cars", "Set the daily rate and rest day. This creates the expected payments.", "new-assign", "Assign a driver")}
+  </div></div>`;
+}
+
+function viewHome(c) {
+  if (!S.cars.length || !S.drivers.length || !S.assigns.length) return onboarding();
+  const t = c.tot;
+  const dueToday = c.todayRows.reduce((s, r) => s + r.due, 0), paidToday = c.todayRows.reduce((s, r) => s + r.paid, 0);
+  const collRate = t.exp ? t.rev / (t.exp + t.charges) : NaN;
+  const util = t.denom ? t.earn / t.denom : NaN;
+  const margin = t.rev ? t.net / t.rev : NaN;
+  const owing = c.drivers.filter(d => d.balance > 1).sort((a, b) => b.balance - a.balance);
+  return `
+  <div class="section">
+    <div class="section-head"><h2>Today</h2><span class="small muted">${fmtDate(c.T)} · ${DAYS[weekday(c.T)]}</span></div>
+    <div class="grid kpis">
+      <div class="card kpi"><div class="label">Collected today</div><div class="value num">${ksh(paidToday)}</div><div class="sub num">of ${ksh(dueToday)} due</div><div class="meter"><i style="width:${dueToday ? Math.min(100, paidToday / dueToday * 100) : 0}%"></i></div></div>
+      <div class="card kpi"><div class="label">Cars earning today</div><div class="value num">${c.cars.filter(x => x.status === "good").length} / ${c.cars.filter(x => !(x.soldDate && x.soldDate <= c.T)).length}</div><div class="sub">${c.cars.filter(x => x.status === "bad").length} off road · ${c.cars.filter(x => x.statusLabel === "No driver").length} without driver</div></div>
+      <div class="card kpi"><div class="label">Total owed by drivers</div><div class="value num" style="color:${t.arrears > 0 ? "var(--bad)" : "var(--good)"}">${ksh(t.arrears)}</div><div class="sub">${owing.length} driver${owing.length === 1 ? "" : "s"} behind</div></div>
+    </div>
+  </div>
+  <div class="section">
+    <div class="section-head"><h2>Needs attention</h2><span class="small muted">${c.alerts.length} item${c.alerts.length === 1 ? "" : "s"}</span></div>
+    ${c.alerts.length ? `<div class="alerts">${c.alerts.slice(0, 8).map(a => `<div class="alert ${a.sev}" ${a.link ? `data-action="open" data-v="${a.link}" style="cursor:pointer"` : ""}><div><div class="what">${esc(a.what)}</div><div class="why">${esc(a.why)}</div></div></div>`).join("")}${c.alerts.length > 8 ? `<div class="small muted">and ${c.alerts.length - 8} more on the Cars and Drivers pages</div>` : ""}</div>` : `<div class="card small muted">Nothing needs attention. Every driver is up to date and every document is current.</div>`}
+  </div>
+  <div class="section">
+    <div class="section-head"><h2>Performance</h2>${periodSeg()}</div>
+    <div class="grid kpis">
+      <div class="card kpi"><div class="label">Collected</div><div class="value num">${ksh(t.rev)}</div><div class="sub">${pct(collRate)} of ${ksh(t.exp + t.charges)} expected</div></div>
+      <div class="card kpi"><div class="label">Owner costs</div><div class="value num">${ksh(t.cost)}</div><div class="sub">Service, repairs, insurance, etc.</div></div>
+      <div class="card kpi"><div class="label">Net profit</div><div class="value num" style="color:${t.net < 0 ? "var(--bad)" : "var(--ink)"}">${ksh(t.net)}</div><div class="sub">${pct(margin)} margin</div></div>
+      <div class="card kpi"><div class="label">Utilisation</div><div class="value num">${pct(util)}</div><div class="sub">${t.earn} of ${t.denom} working car-days</div><div class="meter"><i style="width:${isFinite(util) ? util * 100 : 0}%"></i></div></div>
+    </div>
+    <div class="small muted">${esc(c.P.label)}. Expected income counts each driver's daily rate, minus rest days and days the car was off the road for reasons that were not the driver's fault.</div>
+  </div>
+  ${trendChart(c.trend)}
+  <div class="section">
+    <div class="section-head"><h2>Profit by car</h2><span class="small muted">${esc(c.P.label)}</span></div>
+    ${carTable(c.cars)}
+  </div>
+  <div class="section">
+    <div class="section-head"><h2>Driver balances</h2><a class="small" href="#drivers">All drivers</a></div>
+    ${driverList(c.drivers.filter(d => d.assign || d.balance > 1).sort((a, b) => b.balance - a.balance))}
+  </div>`;
+}
+
+function trendChart(tr) {
+  if (!tr.length) return "";
+  const W = Math.max(340, Math.min(640, (document.getElementById("view").clientWidth || 640) - 30)), H = 220, L = 46, R = 8, Tp = 12, B = 26;
+  const max = Math.max(1, ...tr.map(x => Math.max(x.rev, x.cost)));
+  const nice = (() => { const p = Math.pow(10, Math.floor(Math.log10(max))); for (const m of [1, 2, 2.5, 5, 10]) if (m * p >= max) return m * p; return 10 * p; })();
+  const y = v => Tp + (H - Tp - B) * (1 - v / nice);
+  const gw = (W - L - R) / tr.length, bw = Math.min(26, gw / 3.2);
+  const ticks = [0, 0.25, 0.5, 0.75, 1].map(f => f * nice);
+  let s = `<svg class="chart" viewBox="0 0 ${W} ${H}" role="img" aria-label="Monthly collections and owner costs">`;
+  for (const t of ticks) s += `<line x1="${L}" x2="${W - R}" y1="${y(t)}" y2="${y(t)}" stroke="var(--line)" stroke-width="1"/><text x="${L - 6}" y="${y(t) + 4}" text-anchor="end">${kshShort(t)}</text>`;
+  tr.forEach((m, i) => {
+    const cx = L + gw * i + gw / 2;
+    const bar = (v, x, col, name) => { const top = y(v), h = Math.max(0, H - B - top); return h > 0 ? `<path d="M${x},${H - B} V${top + Math.min(4, h)} q0,-4 4,-4 h${bw - 8} q4,0 4,4 V${H - B} Z" fill="${col}" data-tip="${esc(fmtMonth(m.m))} · ${name}: ${esc(ksh(v))}"/>` : ""; };
+    s += bar(m.rev, cx - bw - 1, "var(--series-1)", "Collected") + bar(m.cost, cx + 1, "var(--series-2)", "Owner costs");
+    s += `<rect x="${cx - gw / 2}" y="${Tp}" width="${gw}" height="${H - Tp - B}" fill="transparent" data-tip="${esc(fmtMonth(m.m))} · Collected ${esc(ksh(m.rev))} · Costs ${esc(ksh(m.cost))} · Net ${esc(ksh(m.rev - m.cost))}"/>`;
+    s += `<text x="${cx}" y="${H - 8}" text-anchor="middle">${MONTHS_SHORT[Number(m.m.slice(5)) - 1]}</text>`;
+  });
+  s += `<line x1="${L}" x2="${W - R}" y1="${H - B}" y2="${H - B}" stroke="var(--muted)" stroke-width="1"/></svg>`;
+  return `<div class="section"><div class="section-head"><h2>Monthly trend</h2><div class="legend"><span><i style="background:var(--series-1)"></i>Collected</span><span><i style="background:var(--series-2)"></i>Owner costs</span></div></div><div class="card">${s}</div></div>`;
+}
+
+function bindChart() {
+  const tip = document.getElementById("tip");
+  document.querySelectorAll("[data-tip]").forEach(el => {
+    el.addEventListener("pointermove", e => { tip.textContent = el.getAttribute("data-tip"); tip.style.display = "block"; const x = Math.min(e.clientX + 12, window.innerWidth - tip.offsetWidth - 8); tip.style.left = x + "px"; tip.style.top = (e.clientY - 34) + "px"; });
+    el.addEventListener("pointerleave", () => { tip.style.display = "none"; });
+  });
+}
+
+function carTable(cars) {
+  if (!cars.length) return `<div class="card empty">No cars yet.</div>`;
+  const rows = [...cars].sort((a, b) => b.net - a.net).map(c => `<tr class="click" data-action="open" data-v="car:${c.id}">
+    <td>${plate(c.plate)}<div class="small muted">${esc([c.make, c.model].filter(Boolean).join(" "))}</div></td>
+    <td>${c.driver ? esc(c.driver.name) : `<span class="muted">—</span>`}<div>${pill(c.status, c.statusLabel)}</div></td>
+    <td class="r">${ksh(c.revP)}<div class="small muted">${pct(c.collRate)} of due</div></td>
+    <td class="r">${ksh(c.costP)}</td>
+    <td class="r"><b style="color:${c.net < 0 ? "var(--bad)" : "inherit"}">${ksh(c.net)}</b></td>
+    <td class="r">${pct(c.util)}</td>
+    <td class="r">${isFinite(c.costPerKm) ? "KSh " + c.costPerKm.toFixed(1) : "—"}</td>
+    <td class="r">${isFinite(c.payback) ? pct(c.payback) : "—"}<div class="small muted">${isFinite(c.monthsLeft) ? (c.monthsLeft === 0 ? "Paid back" : "~" + Math.ceil(c.monthsLeft) + " mo left") : ""}</div></td>
+  </tr>`).join("");
+  return `<div class="table-wrap"><table><thead><tr><th>Car</th><th>Driver</th><th class="r">Collected</th><th class="r">Costs</th><th class="r">Net</th><th class="r">Utilisation</th><th class="r">Cost/km</th><th class="r">Paid back</th></tr></thead><tbody>${rows}</tbody></table></div>`;
+}
+
+function driverList(ds) {
+  if (!ds.length) return `<div class="card empty">No drivers yet.</div>`;
+  return `<div class="list">${ds.map(d => `<div class="li" data-action="open" data-v="driver:${d.id}" style="cursor:pointer">
+    <div class="main"><div class="t">${esc(d.name)} ${d.assign ? plate(carLabel(d.assign.carId)) : `<span class="small muted">Not driving</span>`}</div>
+    <div class="small muted">${d.assign ? ksh(d.rate) + "/day" : ""}${d.lastPay ? " · last paid " + fmtShort(d.lastPay) : " · no payments yet"}</div></div>
+    <div class="end"><b class="num" style="color:${d.balance > 1 ? "var(--bad)" : "var(--good)"}">${d.balance > 1 ? ksh(d.balance) + " owed" : d.balance < -1 ? ksh(-d.balance) + " credit" : "KSh 0"}</b>${pill(d.status, d.statusLabel)}</div>
+  </div>`).join("")}</div>`;
+}
+
+function viewCollect(c) {
+  if (!S.assigns.length) return onboarding();
+  const rows = [...c.todayRows].sort((a, b) => (b.due - b.paid) - (a.due - a.paid));
+  const recent = all("payments").sort((a, b) => (b.date + (b.updatedAt || "")).localeCompare(a.date + (a.updatedAt || ""))).slice(0, 15);
+  return `
+  <div class="section"><div class="section-head"><h2>Today's payments</h2><span class="small muted">${fmtDate(c.T)}</span></div>
+  <div class="list">${rows.map(r => {
+    const dbal = c.drivers.find(d => d.id === r.a.driverId);
+    const state = r.isRest ? pill("neutral", "Rest day") : r.dn && r.dn.excused ? pill("neutral", "Off road") : r.paid >= r.due ? pill("good", "Paid") : r.paid > 0 ? pill("warn", "Part paid") : pill("bad", "Not yet paid");
+    return `<div class="li"><div class="main"><div class="t">${esc(r.driver ? r.driver.name : "?")} ${plate(r.car.plate)}</div>
+      <div class="small muted num">Paid ${ksh(r.paid)} of ${ksh(r.due)}${dbal && dbal.balance > 1 ? ` · owes ${ksh(dbal.balance)} in total` : ""}</div><div>${state}</div></div>
+      <div class="end">${S.canWrite ? `<button class="btn primary sm" data-action="new-payment" data-v="${r.a.driverId}">Record</button>` : ""}<button class="btn sm" data-action="statement" data-v="${r.a.driverId}">Statement</button></div></div>`;
+  }).join("") || `<div class="empty">No drivers are assigned today.</div>`}</div></div>
+  <div class="section"><div class="section-head"><h2>Recent payments</h2><button class="btn sm" data-action="go" data-v="import">Import M-Pesa statement</button></div>
+  ${recordList("payments", recent)}</div>`;
+}
+
+function recordList(kind, rows) {
+  if (!rows.length) return `<div class="card empty">Nothing recorded yet.</div>`;
+  const line = r => {
+    if (kind === "payments") return [`${esc(driverName(r.driverId))} ${r.carId ? plate(carLabel(r.carId)) : ""}`, `${fmtDate(r.date)} · ${esc(r.method || "")}${r.ref ? " · " + esc(r.ref) : ""}`, ksh(r.amount)];
+    if (kind === "expenses") return [`${esc(r.category)} ${plate(carLabel(r.carId))}`, `${fmtDate(r.date)}${r.vendor ? " · " + esc(r.vendor) : ""}${r.chargeDriver ? " · charged to " + esc(driverName(r.driverId)) : ""}${r.note ? " · " + esc(r.note) : ""}`, ksh(r.amount)];
+    if (kind === "downtime") return [`${esc(r.reason)} ${plate(carLabel(r.carId))}`, `${fmtDate(r.from)} → ${r.to ? fmtDate(r.to) : "still off road"}${r.excused === false ? " · driver still owes" : " · driver not charged"}${r.note ? " · " + esc(r.note) : ""}`, `${dayDiff(r.from, r.to || todayStr()) + 1} day(s)`];
+    return [`${plate(carLabel(r.carId))}`, fmtDate(r.date), `${Number(r.km).toLocaleString()} km`];
+  };
+  return `<div class="list">${rows.map(r => { const [a, b, z] = line(r); return `<div class="li"><div class="main"><div class="t">${a}</div><div class="small muted">${b}</div></div><div class="end"><b class="num">${z}</b>${S.canWrite ? `<div class="row-actions"><button class="btn sm" data-action="edit-rec" data-k="${kind}" data-v="${r.id}" data-m="${monthOf(r.date || r.from)}">Edit</button></div>` : ""}</div></div>`; }).join("")}</div>`;
+}
+
+function viewCars(c) {
+  if (S.detail && S.detail.startsWith("car:")) return carDetail(c, S.detail.slice(4));
+  return `<div class="section"><div class="section-head"><h2>Cars</h2><div class="row-actions">${periodSeg()}${S.canWrite ? `<button class="btn primary sm" data-action="new-car">Add car</button>` : ""}</div></div>${carTable(c.cars)}
+  <div class="small muted">Utilisation is the share of working days (rest days excluded) the car was on the road with a driver. Paid back is lifetime net profit divided by purchase price.</div></div>`;
+}
+
+function carDetail(c, id) {
+  const car = c.cars.find(x => x.id === id); if (!car) { S.detail = null; return viewCars(c); }
+  const hist = S.assigns.filter(a => a.carId === id).sort((a, b) => b.start.localeCompare(a.start));
+  const recs = k => all(k).filter(r => r.carId === id).sort((a, b) => (b.date || b.from).localeCompare(a.date || a.from)).slice(0, 10);
+  const iv = Number(car.serviceIntervalKm) || Number(S.settings.serviceIntervalKm) || 5000;
+  const doc = (l, d) => { const left = d ? dayDiff(c.T, d) : null; return `<div><span>${l}</span><b>${d ? fmtDate(d) : "—"}</b> ${d ? (left < 0 ? pill("bad", "Expired") : left <= (S.settings.warnDays || 30) ? pill("warn", left + " days") : "") : ""}</div>`; };
+  return `<div class="section"><div class="row-actions"><button class="btn sm" data-action="back">← All cars</button></div>
+  <div class="section-head"><h2>${plate(car.plate)} ${esc([car.make, car.model, car.year].filter(Boolean).join(" "))}</h2>${pill(car.status, car.statusLabel)}</div>
+  <div class="row-actions">${S.canWrite ? `<button class="btn sm" data-action="edit-car" data-v="${id}">Edit car</button><button class="btn sm" data-action="new-assign" data-v="car:${id}">${car.assign ? "Change driver" : "Assign driver"}</button><button class="btn sm" data-action="new-expense" data-v="${id}">Add expense</button><button class="btn sm" data-action="new-downtime" data-v="${id}">Log off-road days</button><button class="btn sm" data-action="new-odo" data-v="${id}">Record mileage</button>` : ""}</div>
+  <div class="card"><div class="detail-grid">
+    <div><span>Driver</span><b>${car.driver ? esc(car.driver.name) : "None"}</b></div>
+    <div><span>Daily rate</span><b>${car.assign ? ksh(car.assign.rate) : "—"}</b></div>
+    <div><span>Purchase price</span><b>${car.price ? ksh(car.price) : "—"}</b></div>
+    <div><span>Lifetime net profit</span><b>${ksh(car.netAll)}</b></div>
+    <div><span>Paid back</span><b>${isFinite(car.payback) ? pct(car.payback) : "—"}</b></div>
+    <div><span>Odometer</span><b>${car.odo.lastKm != null ? car.odo.lastKm.toLocaleString() + " km" : "—"}</b></div>
+    <div><span>Next service at</span><b>${car.odo.lastService ? (car.odo.lastService + iv).toLocaleString() + " km" : "—"}</b></div>
+    ${doc("Insurance expires", car.insuranceExpiry)}${doc("NTSA inspection", car.inspectionExpiry)}${doc("PSV / platform licence", car.tncExpiry)}${doc("Tracker paid to", car.trackerExpiry)}
+  </div></div>
+  <div class="section-head"><h3>${esc(S.calc.P.label)}</h3>${periodSeg()}</div>
+  <div class="grid kpis">
+    <div class="card kpi"><div class="label">Collected</div><div class="value num">${ksh(car.revP)}</div><div class="sub">${pct(car.collRate)} of ${ksh(car.expP)} due</div></div>
+    <div class="card kpi"><div class="label">Costs</div><div class="value num">${ksh(car.costP)}</div><div class="sub">${isFinite(car.costPerKm) ? "KSh " + car.costPerKm.toFixed(1) + " per km" : "Record mileage for cost/km"}</div></div>
+    <div class="card kpi"><div class="label">Net</div><div class="value num">${ksh(car.net)}</div></div>
+    <div class="card kpi"><div class="label">Utilisation</div><div class="value num">${pct(car.util)}</div><div class="sub">${car.downP} off-road, ${car.idleP} idle days</div></div>
+  </div>
+  <h3>Driver history</h3>
+  <div class="list">${hist.map(a => `<div class="li"><div class="main"><div class="t">${esc(driverName(a.driverId))}</div><div class="small muted">${fmtDate(a.start)} → ${a.end ? fmtDate(a.end) : "now"} · ${ksh(a.rate)}/day · rest day ${a.restDay === "" || a.restDay == null ? "none" : DAYS[a.restDay]}</div></div>${S.canWrite ? `<div class="end"><button class="btn sm" data-action="edit-assign" data-v="${a.id}">Edit</button></div>` : ""}</div>`).join("") || `<div class="empty">No drivers assigned yet.</div>`}</div>
+  <h3>Recent expenses</h3>${recordList("expenses", recs("expenses"))}
+  <h3>Off-road days</h3>${recordList("downtime", recs("downtime"))}
+  <h3>Mileage readings</h3>${recordList("odo", recs("odo"))}
+  </div>`;
+}
+
+function viewDrivers(c) {
+  if (S.detail && S.detail.startsWith("driver:")) return driverDetail(c, S.detail.slice(7));
+  const ds = [...c.drivers].sort((a, b) => b.balance - a.balance);
+  return `<div class="section"><div class="section-head"><h2>Drivers</h2>${S.canWrite ? `<div class="row-actions"><button class="btn sm" data-action="new-assign">Assign to car</button><button class="btn primary sm" data-action="new-driver">Add driver</button></div>` : ""}</div>
+  ${driverList(ds)}<div class="small muted">Balance = opening balance + daily rates due + charges (fines, damage) − payments received. Rest days and off-road days that weren't the driver's fault are not charged.</div></div>`;
+}
+
+function driverDetail(c, id) {
+  const d = c.drivers.find(x => x.id === id); if (!d) { S.detail = null; return viewDrivers(c); }
+  const pays = all("payments").filter(p => p.driverId === id).sort((a, b) => b.date.localeCompare(a.date)).slice(0, 15);
+  const chg = all("expenses").filter(x => x.chargeDriver && x.driverId === id).sort((a, b) => b.date.localeCompare(a.date));
+  const hist = S.assigns.filter(a => a.driverId === id).sort((a, b) => b.start.localeCompare(a.start));
+  return `<div class="section"><div class="row-actions"><button class="btn sm" data-action="back">← All drivers</button></div>
+  <div class="section-head"><h2>${esc(d.name)}</h2>${pill(d.status, d.statusLabel)}</div>
+  <div class="row-actions">${S.canWrite ? `<button class="btn primary sm" data-action="new-payment" data-v="${id}">Record payment</button><button class="btn sm" data-action="edit-driver" data-v="${id}">Edit driver</button><button class="btn sm" data-action="new-assign" data-v="driver:${id}">${d.assign ? "Change car" : "Assign to car"}</button>` : ""}<button class="btn sm" data-action="statement" data-v="${id}">Share statement</button></div>
+  <div class="card"><div class="detail-grid">
+    <div><span>Balance</span><b style="color:${d.balance > 1 ? "var(--bad)" : "var(--good)"}">${d.balance > 1 ? ksh(d.balance) + " owed" : d.balance < -1 ? ksh(-d.balance) + " credit" : "KSh 0"}</b></div>
+    <div><span>Days behind</span><b>${d.balance > 1 && d.rate ? d.daysBehind.toFixed(1) : "0"}</b></div>
+    <div><span>Car</span><b>${d.assign ? plate(carLabel(d.assign.carId)) : "None"}</b></div>
+    <div><span>Daily rate</span><b>${d.rate ? ksh(d.rate) : "—"}</b></div>
+    <div><span>Phone</span><b>${esc(d.phone || "—")}</b></div>
+    <div><span>Driving licence</span><b>${fmtDate(d.licenseExpiry)}</b></div>
+    <div><span>PSV badge</span><b>${fmtDate(d.psvBadgeExpiry)}</b></div>
+    <div><span>Deposit held</span><b>${d.deposit ? ksh(d.deposit) : "—"}</b></div>
+    <div><span>Total paid</span><b>${ksh(d.payAll)}</b></div>
+    <div><span>Total due</span><b>${ksh(d.expAll + d.chgAll + (Number(d.openingBalance) || 0))}</b></div>
+  </div></div>
+  <h3>Payments</h3>${recordList("payments", pays)}
+  <h3>Charges (fines, damage)</h3>${recordList("expenses", chg)}
+  <h3>Cars driven</h3><div class="list">${hist.map(a => `<div class="li"><div class="main"><div class="t">${plate(carLabel(a.carId))}</div><div class="small muted">${fmtDate(a.start)} → ${a.end ? fmtDate(a.end) : "now"} · ${ksh(a.rate)}/day</div></div></div>`).join("") || `<div class="empty">Not assigned yet.</div>`}</div>
+  </div>`;
+}
+
+function viewMore() {
+  const recent = k => all(k).sort((a, b) => (b.date || b.from).localeCompare(a.date || a.from)).slice(0, 20);
+  const tab = S.moreTab || "expenses";
+  const tabs = [["expenses", "Expenses"], ["downtime", "Off-road days"], ["odo", "Mileage"], ["payments", "Payments"]];
+  const addAction = { expenses: "new-expense", downtime: "new-downtime", odo: "new-odo", payments: "new-payment" }[tab];
+  return `<div class="section"><div class="section-head"><h2>Records</h2><div class="row-actions"><button class="btn sm" data-action="go" data-v="import">Import M-Pesa</button><button class="btn sm" data-action="go" data-v="settings">Settings</button></div></div>
+  <div class="section-head"><div class="seg">${tabs.map(([k, l]) => `<button data-action="more-tab" data-v="${k}" class="${tab === k ? "on" : ""}">${l}</button>`).join("")}</div>${S.canWrite && S.cars.length ? `<button class="btn primary sm" data-action="${addAction}">Add</button>` : ""}</div>
+  ${recordList(tab, recent(tab))}<div class="small muted">Showing the latest 20. Open a car or driver to see their full history.</div></div>`;
+}
+
+function viewSettings() {
+  const st = S.settings;
+  return `<div class="section"><div class="row-actions"><button class="btn sm" data-action="go" data-v="more">← Records</button></div><h2>Settings</h2>
+  <div class="card"><div class="detail-grid">
+    <div><span>Business name</span><b>${esc(st.name)}</b></div>
+    <div><span>Counting from</span><b>${fmtDate(trackStart())}</b></div>
+    <div><span>Warn before expiry</span><b>${st.warnDays} days</b></div>
+    <div><span>Arrears alert after</span><b>${st.arrearsDays} days unpaid</b></div>
+    <div><span>Default service interval</span><b>${Number(st.serviceIntervalKm).toLocaleString()} km</b></div>
+    <div><span>Warn before service</span><b>${Number(st.serviceWarnKm).toLocaleString()} km</b></div>
+  </div>${S.canWrite ? `<div style="margin-top:12px"><button class="btn primary sm" data-action="edit-settings">Edit settings</button></div>` : ""}</div>
+  <div class="card small"><h3>Sharing with family</h3><p class="muted">Create a login for each family member in Firebase (Authentication &gt; Users &gt; Add user), then add their email to the list in firestore.rules and publish the rules. Only emails on that list can see or change the figures. Drivers don't get access: send them their statement from the Collect or Drivers page instead.</p></div></div>`;
+}
+
+/* ============ M-Pesa import ============ */
+let IMP = null;
+function viewImport() {
+  const body = !IMP ? `<div class="card"><h3>Upload an M-Pesa statement</h3>
+    <p class="small muted">From the M-Pesa Org Portal (or M-Pesa for Business app), export the Till or Paybill statement as Excel or CSV. The importer reads the <b>Receipt No.</b>, <b>Completion Time</b>, <b>Paid In</b>, <b>Other Party Info</b> and <b>A/C No.</b> columns, then matches each payment to a driver by phone number, name, or the car plate used as account number. Receipts already recorded are skipped.</p>
+    <label class="fl" for="imp-file">Statement file (.xlsx, .xls or .csv)<input id="imp-file" type="file" accept=".xlsx,.xls,.csv"></label>
+    <p class="small muted">Tip: on a Paybill, ask drivers to enter their plate number (e.g. KDA123A) as the account number. That makes matching certain.</p></div>`
+    : importPreview();
+  return `<div class="section"><div class="row-actions"><button class="btn sm" data-action="imp-reset">← Back</button></div><h2>Import M-Pesa payments</h2>${body}</div>`;
+}
+
+function parseAnyDate(v) {
+  if (v == null || v === "") return null;
+  if (typeof v === "number") { const d = XLSX.SSF.parse_date_code(v); return d ? `${d.y}-${String(d.m).padStart(2, "0")}-${String(d.d).padStart(2, "0")}` : null; }
+  if (v instanceof Date) return v.toISOString().slice(0, 10);
+  const s = String(v).trim();
+  let m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/); if (m) return `${m[1]}-${m[2].padStart(2, "0")}-${m[3].padStart(2, "0")}`;
+  m = s.match(/^(\d{1,2})[\/\.-](\d{1,2})[\/\.-](\d{4})/); if (m) return `${m[3]}-${m[2].padStart(2, "0")}-${m[1].padStart(2, "0")}`;
+  const t = Date.parse(s); return isNaN(t) ? null : new Date(t).toISOString().slice(0, 10);
+}
+
+function matchDriver(row) {
+  const T = row.date || todayStr();
+  const hay = (row.party + " " + row.details + " " + row.account).toUpperCase();
+  const acct = normPlate(row.account + " " + row.details);
+  // 1. Plate in account number
+  for (const c of S.cars) { const p = normPlate(c.plate); if (p.length >= 5 && acct.includes(p)) { const a = assignOn(c.id, T); if (a) return { driverId: a.driverId, how: "plate" }; } }
+  // 2. Full phone number
+  const ph = phoneKey(row.party) || phoneKey(row.details);
+  if (ph) { const d = S.drivers.find(d => phoneKey(d.phone) === ph); if (d) return { driverId: d.id, how: "phone" }; }
+  // 3. Name: all name parts found, or first + last
+  let best = null;
+  for (const d of S.drivers) {
+    const parts = String(d.name || "").toUpperCase().split(/\s+/).filter(x => x.length > 1);
+    const hits = parts.filter(p => new RegExp("\\b" + p.replace(/[^A-Z]/g, "") + "\\b").test(hay)).length;
+    if (parts.length && hits >= Math.min(2, parts.length) && (!best || hits > best.hits)) best = { driverId: d.id, how: "name", hits };
+  }
+  return best || { driverId: "", how: "" };
+}
+
+async function handleImportFile(file) {
+  try {
+    const buf = await file.arrayBuffer();
+    const wb = XLSX.read(buf, { type: "array", cellDates: false });
+    let rows = [];
+    for (const name of wb.SheetNames) rows = rows.concat(XLSX.utils.sheet_to_json(wb.Sheets[name], { header: 1, raw: true, defval: "" }));
+    const hi = rows.findIndex(r => r.some(c => /receipt/i.test(String(c))) && r.some(c => /paid\s*in|amount|credit/i.test(String(c))));
+    if (hi < 0) { toast("Couldn't find the Receipt No. and Paid In columns in this file"); return; }
+    const H = rows[hi].map(c => String(c).trim().toLowerCase());
+    const col = re => H.findIndex(h => re.test(h));
+    const ci = { rec: col(/receipt/), time: col(/completion|date|time/), det: col(/details|description/), paid: col(/paid\s*in|credit|amount/), party: col(/other party|party|sender|name/), acct: col(/a\/c|account|bill ref/), status: col(/status/) };
+    const known = new Set(all("payments").map(p => p.id));
+    const out = [];
+    for (const r of rows.slice(hi + 1)) {
+      const rec = String(r[ci.rec] ?? "").trim(); const amt = num(r[ci.paid]);
+      if (!rec || amt <= 0) continue;
+      if (ci.status >= 0 && r[ci.status] && !/complet/i.test(String(r[ci.status]))) continue;
+      const row = { ref: rec, id: recordId(rec), date: parseAnyDate(r[ci.time]), amount: amt, details: ci.det >= 0 ? String(r[ci.det]) : "", party: ci.party >= 0 ? String(r[ci.party]) : "", account: ci.acct >= 0 ? String(r[ci.acct]) : "" };
+      const m = matchDriver(row);
+      row.driverId = m.driverId; row.how = m.how; row.dup = row.id && known.has(row.id);
+      row.include = !row.dup && !!row.driverId && !!row.date && row.date >= trackStart();
+      out.push(row);
+    }
+    IMP = { rows: out, file: file.name };
+    render();
+  } catch (e) { toast("Couldn't read that file. Try saving it as .xlsx or .csv"); }
+}
+
+function importPreview() {
+  const r = IMP.rows; const sel = r.filter(x => x.include);
+  const opts = id => `<option value="">Not a driver payment</option>` + S.drivers.map(d => `<option value="${d.id}" ${d.id === id ? "selected" : ""}>${esc(d.name)}</option>`).join("");
+  return `<div class="card small">${esc(IMP.file)}: ${r.length} incoming payments found · ${r.filter(x => x.dup).length} already recorded · ${r.filter(x => !x.dup && x.driverId).length} matched to a driver. Check the matches, fix any that are wrong, then import.</div>
+  <div class="table-wrap"><table><thead><tr><th></th><th>Date</th><th>Receipt</th><th class="r">Amount</th><th>From</th><th>Driver</th></tr></thead><tbody>
+  ${r.map((x, i) => `<tr><td><input type="checkbox" id="imp-${i}" data-action="imp-toggle" data-v="${i}" ${x.include ? "checked" : ""} ${x.dup || !x.date ? "disabled" : ""} aria-label="Include ${esc(x.ref)}"></td><td>${x.date ? fmtShort(x.date) : `<span class="err">No date</span>`}</td><td class="small">${esc(x.ref)}${x.dup ? `<div>${pill("neutral", "Already recorded")}</div>` : ""}</td><td class="r">${ksh(x.amount)}</td><td class="small">${esc(x.party || x.details).slice(0, 60)}${x.account ? `<div class="muted">A/C ${esc(x.account)}</div>` : ""}</td>
+  <td><select id="imp-d-${i}" data-action="imp-driver" data-v="${i}" ${x.dup ? "disabled" : ""}>${opts(x.driverId)}</select>${x.how ? `<div class="small muted">matched by ${x.how}</div>` : ""}</td></tr>`).join("")}
+  </tbody></table></div>
+  <div class="row-actions"><button class="btn primary" data-action="imp-go" ${sel.length && S.canWrite ? "" : "disabled"}>Import ${sel.length} payment${sel.length === 1 ? "" : "s"} (${ksh(sel.reduce((t, x) => t + x.amount, 0))})</button></div>`;
+}
+
+async function runImport() {
+  const sel = IMP.rows.filter(x => x.include && x.driverId);
+  let n = 0;
+  const btn = document.querySelector('[data-action="imp-go"]'); if (btn) { btn.disabled = true; btn.textContent = "Importing…"; }
+  const touched = new Set();
+  for (const x of sel) {
+    const a = driverAssignOn(x.driverId, x.date);
+    const data = { date: x.date, driverId: x.driverId, carId: a ? a.carId : "", amount: x.amount, method: /paybill/i.test(IMP.file) ? "M-Pesa Paybill" : "M-Pesa Till", ref: x.ref, note: "Imported" + (x.party ? " · " + x.party.slice(0, 60) : ""), updatedAt: new Date().toISOString() };
+    const col = S.db.collection(`months/${monthOf(x.date)}/payments`);
+    const ok = await save(() => (x.id ? col.doc(x.id) : col.doc()).set(data));
+    if (!ok) break;
+    n++; touched.add(monthOf(x.date));
+  }
+  touched.forEach(m => refreshMonth(m, "payments"));
+  toast(`Imported ${n} payment${n === 1 ? "" : "s"}`);
+  IMP = null; S.view = "collect"; location.hash = "collect"; render();
+}
+
+/* ============ Statement ============ */
+function statementText(id) {
+  const d = S.calc.drivers.find(x => x.id === id); if (!d) return "";
+  const T = todayStr(), from = (() => { const f = addDays(T, -13); return f < trackStart() ? trackStart() : f; })();
+  const pays = all("payments").filter(p => p.driverId === id && p.date >= from).sort((a, b) => a.date.localeCompare(b.date));
+  const chg = all("expenses").filter(x => x.chargeDriver && x.driverId === id && x.date >= from);
+  const lines = [];
+  lines.push(`${S.settings.name || "Fleet"}: statement for ${d.name}`);
+  if (d.assign) lines.push(`Car ${carLabel(d.assign.carId)} · ${ksh(d.rate)} per day`);
+  lines.push(`As at ${fmtDate(T)}`);
+  lines.push("");
+  lines.push(`Payments since ${fmtShort(from)}:`);
+  if (!pays.length) lines.push("  none");
+  pays.forEach(p => lines.push(`  ${fmtShort(p.date)}  ${ksh(p.amount)}${p.ref ? "  (" + p.ref + ")" : ""}`));
+  if (chg.length) { lines.push(""); lines.push("Charges:"); chg.forEach(x => lines.push(`  ${fmtShort(x.date)}  ${x.category}  ${ksh(x.amount)}${x.note ? " · " + x.note : ""}`)); }
+  lines.push("");
+  lines.push(d.balance > 1 ? `Balance owed: ${ksh(d.balance)} (about ${d.daysBehind.toFixed(1)} days)` : d.balance < -1 ? `You are ${ksh(-d.balance)} in credit. Thank you.` : "You are fully paid up. Thank you.");
+  return lines.join("\n");
+}
+function openStatement(id) {
+  const d = driverById(id); const txt = statementText(id);
+  const wa = phoneKey(d && d.phone) ? `https://wa.me/254${phoneKey(d.phone)}?text=${encodeURIComponent(txt)}` : "";
+  openSheet(`Statement for ${d ? d.name : ""}`, `<pre class="stmt" id="stmt-text">${esc(txt)}</pre>
+  <div class="row-actions" style="margin-top:12px"><button class="btn primary" data-action="copy-stmt">Copy text</button>${wa ? `<a class="btn" href="${wa}" target="_blank" rel="noopener">Open in WhatsApp</a>` : ""}</div>
+  <p class="small muted">Send this to the driver by WhatsApp or SMS so they always know their balance.${d && d.phone ? " WhatsApp number: +254 " + esc(phoneKey(d.phone)) : ""}</p>`);
+}
+
+/* ============ Forms ============ */
+function openSheet(title, html) {
+  const sh = document.getElementById("sheet");
+  sh.innerHTML = `<div class="head"><h2 id="sheet-title">${esc(title)}</h2><button class="x" data-action="close" aria-label="Close">×</button></div>${html}`;
+  sh.classList.add("open"); document.getElementById("scrim").classList.add("open");
+  const first = sh.querySelector("input,select,textarea"); if (first && window.innerWidth > 700) first.focus();
+}
+function closeSheet() { document.getElementById("sheet").classList.remove("open"); document.getElementById("scrim").classList.remove("open"); }
+
+function fieldHtml(f) {
+  const id = "f-" + f.id, v = f.value ?? "";
+  if (f.type === "check") return `<label class="ck" for="${id}"><input type="checkbox" id="${id}" ${v ? "checked" : ""}> ${esc(f.label)}</label>${f.hint ? `<div class="hint">${esc(f.hint)}</div>` : ""}`;
+  let input;
+  if (f.type === "select") input = `<select id="${id}" ${f.required ? "required" : ""}>${f.options.map(o => { const [ov, ol] = Array.isArray(o) ? o : [o, o]; return `<option value="${esc(ov)}" ${String(ov) === String(v) ? "selected" : ""}>${esc(ol)}</option>`; }).join("")}</select>`;
+  else if (f.type === "textarea") input = `<textarea id="${id}" rows="2">${esc(v)}</textarea>`;
+  else input = `<input id="${id}" type="${f.type || "text"}" value="${esc(v)}" ${f.required ? "required" : ""} ${f.min ? `min="${f.min}"` : ""} ${f.type === "number" ? 'inputmode="decimal" step="any"' : ""} ${f.placeholder ? `placeholder="${esc(f.placeholder)}"` : ""}>`;
+  return `<label class="fl" for="${id}">${esc(f.label)}${input}${f.hint ? `<span class="hint">${esc(f.hint)}</span>` : ""}</label>`;
+}
+let FORM = null;
+function openForm(title, fields, onSubmit, opts = {}) {
+  FORM = { fields, onSubmit, onDelete: opts.onDelete };
+  const rows = []; for (let i = 0; i < fields.length; i++) { const f = fields[i]; if (f.half && fields[i + 1] && fields[i + 1].half) { rows.push(`<div class="two">${fieldHtml(f)}${fieldHtml(fields[i + 1])}</div>`); i++; } else rows.push(fieldHtml(f)); }
+  openSheet(title, `<form class="f" id="the-form" novalidate>${opts.intro ? `<p class="small muted" style="margin:0">${opts.intro}</p>` : ""}${rows.join("")}<div class="err" id="form-err"></div>
+  <div class="row-actions"><button class="btn primary" type="submit">Save</button>${opts.onDelete ? `<button class="btn danger" type="button" data-action="form-delete">Delete</button>` : ""}</div></form>`);
+  const onChange = opts.onChange; if (onChange) { document.getElementById("the-form").addEventListener("change", e => onChange(e, formVals())); }
+}
+function formVals() {
+  const o = {}; for (const f of FORM.fields) { const el = document.getElementById("f-" + f.id); if (!el) continue; o[f.id] = f.type === "check" ? el.checked : f.type === "number" ? (el.value === "" ? "" : Number(el.value)) : el.value.trim(); } return o;
+}
+const carOpts = (blank) => (blank ? [["", blank]] : []).concat(S.cars.filter(c => !c.soldDate || c.soldDate > todayStr()).map(c => [c.id, c.plate + (c.make ? " · " + c.make + " " + (c.model || "") : "")]));
+const driverOpts = (blank) => (blank ? [["", blank]] : []).concat(S.drivers.filter(d => d.status !== "left").map(d => [d.id, d.name]));
+
+function formPayment(driverId, rec) {
+  const T = todayStr(); const a = driverId ? currentAssignForDriver(driverId) : null;
+  openForm(rec ? "Edit payment" : "Record payment", [
+    { id: "driverId", label: "Driver", type: "select", options: driverOpts("Choose driver"), value: rec ? rec.driverId : driverId || "", required: true },
+    { id: "amount", label: "Amount (KSh)", type: "number", value: rec ? rec.amount : a ? a.rate : "", required: true, half: true },
+    { id: "date", label: "Date", type: "date", value: rec ? rec.date : T, required: true, half: true, min: trackStart() },
+    { id: "method", label: "Paid by", type: "select", options: METHODS, value: rec ? rec.method : "M-Pesa Till", half: true },
+    { id: "ref", label: "M-Pesa code", value: rec ? rec.ref : "", placeholder: "e.g. TKG7H2XQ1P", half: true },
+    { id: "note", label: "Note", value: rec ? rec.note : "" }
+  ], async v => {
+    if (!v.driverId) return "Choose the driver who paid";
+    if (!(v.amount > 0)) return "Enter the amount paid";
+    if (!v.date) return "Enter the date";
+    if (v.date < trackStart()) return "Date is before your tracking start date (" + fmtDate(trackStart()) + ")";
+    const id = recordId(v.ref);
+    if (!rec && id && all("payments").some(p => p.id === id)) return "This M-Pesa code is already recorded";
+    const asg = driverAssignOn(v.driverId, v.date);
+    v.carId = asg ? asg.carId : "";
+    return save(() => writeRecord("payments", v, rec), "Payment saved");
+  }, { onDelete: rec ? () => save(() => deleteRecord("payments", rec), "Payment deleted") : null, onChange: (e, v) => { if (e.target.id === "f-driverId" && !rec) { const as = currentAssignForDriver(v.driverId); if (as) document.getElementById("f-amount").value = as.rate; } } });
+}
+
+function formExpense(carId, rec) {
+  openForm(rec ? "Edit expense" : "Add expense", [
+    { id: "carId", label: "Car", type: "select", options: carOpts("Choose car"), value: rec ? rec.carId : carId || "", required: true },
+    { id: "category", label: "Category", type: "select", options: EXPENSE_CATS, value: rec ? rec.category : "Service", half: true },
+    { id: "amount", label: "Amount (KSh)", type: "number", value: rec ? rec.amount : "", required: true, half: true },
+    { id: "date", label: "Date", type: "date", value: rec ? rec.date : todayStr(), half: true, min: trackStart() },
+    { id: "odometer", label: "Odometer (km)", type: "number", value: rec ? rec.odometer : "", half: true, hint: "Needed for service reminders" },
+    { id: "vendor", label: "Garage / supplier", value: rec ? rec.vendor : "" },
+    { id: "chargeDriver", label: "Charge this to the driver", type: "check", value: rec ? rec.chargeDriver : false, hint: "For fines or damage the driver caused. It's added to what they owe." },
+    { id: "note", label: "Note", type: "textarea", value: rec ? rec.note : "" }
+  ], async v => {
+    if (!v.carId) return "Choose the car"; if (!(v.amount > 0)) return "Enter the amount";
+    if (v.date < trackStart()) return "Date is before your tracking start date";
+    if (v.chargeDriver) { const a = assignOn(v.carId, v.date); if (!a) return "No driver had this car on that date, so it can't be charged"; v.driverId = a.driverId; } else v.driverId = "";
+    if (v.odometer === "") delete v.odometer;
+    return save(() => writeRecord("expenses", v, rec), "Expense saved");
+  }, { onDelete: rec ? () => save(() => deleteRecord("expenses", rec), "Expense deleted") : null });
+}
+
+function formDowntime(carId, rec) {
+  openForm(rec ? "Edit off-road days" : "Log off-road days", [
+    { id: "carId", label: "Car", type: "select", options: carOpts("Choose car"), value: rec ? rec.carId : carId || "", required: true },
+    { id: "reason", label: "Reason", type: "select", options: DOWN_REASONS.map(r => r.v), value: rec ? rec.reason : "Service / repair" },
+    { id: "from", label: "From", type: "date", value: rec ? rec.from : todayStr(), half: true, min: trackStart() },
+    { id: "to", label: "Back on the road", type: "date", value: rec ? rec.to : "", half: true, hint: "Leave empty if still off road" },
+    { id: "excused", label: "Driver doesn't pay for these days", type: "check", value: rec ? rec.excused !== false : true, hint: "Untick if the driver was absent by choice and still owes the daily rate." },
+    { id: "note", label: "Note", value: rec ? rec.note : "" }
+  ], async v => {
+    if (!v.carId) return "Choose the car"; if (!v.from) return "Enter the start date";
+    if (v.to && v.to < v.from) return "Back-on-road date is before the start date";
+    return save(() => writeRecord("downtime", v, rec), "Saved");
+  }, { onDelete: rec ? () => save(() => deleteRecord("downtime", rec), "Deleted") : null, onChange: (e, v) => { if (e.target.id === "f-reason") { const r = DOWN_REASONS.find(x => x.v === v.reason); document.getElementById("f-excused").checked = r ? r.excused : true; } } });
+}
+
+function formOdo(carId, rec) {
+  openForm(rec ? "Edit mileage" : "Record mileage", [
+    { id: "carId", label: "Car", type: "select", options: carOpts("Choose car"), value: rec ? rec.carId : carId || "", required: true },
+    { id: "km", label: "Odometer reading (km)", type: "number", value: rec ? rec.km : "", required: true, half: true },
+    { id: "date", label: "Date", type: "date", value: rec ? rec.date : todayStr(), half: true, min: trackStart() }
+  ], async v => {
+    if (!v.carId) return "Choose the car"; if (!(v.km > 0)) return "Enter the reading";
+    return save(() => writeRecord("odo", v, rec), "Mileage saved");
+  }, { intro: "Take a reading once a week, e.g. every Monday. It drives service reminders and cost per km.", onDelete: rec ? () => save(() => deleteRecord("odo", rec), "Deleted") : null });
+}
+
+function formCar(rec) {
+  const r = rec || {};
+  openForm(rec ? "Edit car" : "Add a car", [
+    { id: "plate", label: "Number plate", value: r.plate, required: true, placeholder: "KDA 123A", half: true },
+    { id: "year", label: "Year", type: "number", value: r.year, half: true },
+    { id: "make", label: "Make", value: r.make, placeholder: "Toyota", half: true },
+    { id: "model", label: "Model", value: r.model, placeholder: "Axio", half: true },
+    { id: "purchasePrice", label: "Purchase price (KSh)", type: "number", value: r.purchasePrice, half: true },
+    { id: "inServiceDate", label: "Started earning on", type: "date", value: r.inServiceDate, half: true },
+    { id: "insuranceExpiry", label: "Insurance expires", type: "date", value: r.insuranceExpiry, half: true },
+    { id: "inspectionExpiry", label: "NTSA inspection due", type: "date", value: r.inspectionExpiry, half: true },
+    { id: "tncExpiry", label: "PSV / platform licence expires", type: "date", value: r.tncExpiry, half: true },
+    { id: "trackerExpiry", label: "Tracker paid until", type: "date", value: r.trackerExpiry, half: true },
+    { id: "lastServiceKm", label: "Last service at (km)", type: "number", value: r.lastServiceKm, half: true },
+    { id: "serviceIntervalKm", label: "Service every (km)", type: "number", value: r.serviceIntervalKm || S.settings.serviceIntervalKm, half: true },
+    { id: "soldDate", label: "Sold / retired on", type: "date", value: r.soldDate, hint: "Leave empty while the car is in the fleet" },
+    { id: "notes", label: "Notes", type: "textarea", value: r.notes }
+  ], async v => {
+    if (!v.plate) return "Enter the number plate";
+    v.plate = v.plate.toUpperCase().replace(/\s+/g, " ");
+    if (S.cars.some(c => c.id !== r.id && normPlate(c.plate) === normPlate(v.plate))) return "A car with this plate already exists";
+    const ref = rec ? S.db.collection("cars").doc(rec.id) : S.db.collection("cars").doc();
+    return save(() => ref.set({ ...v, updatedAt: new Date().toISOString() }), rec ? "Car updated" : "Car added");
+  }, { onDelete: rec ? () => { if (S.assigns.some(a => a.carId === rec.id) || all("payments").some(p => p.carId === rec.id)) { toast("This car has history. Set a sold date instead of deleting it."); return false; } return save(() => S.db.collection("cars").doc(rec.id).delete(), "Car deleted"); } : null });
+}
+
+function formDriver(rec) {
+  const r = rec || {};
+  openForm(rec ? "Edit driver" : "Add a driver", [
+    { id: "name", label: "Full name", value: r.name, required: true, hint: "Use the name as it appears on M-Pesa so payments match" },
+    { id: "phone", label: "M-Pesa phone number", type: "tel", value: r.phone, placeholder: "0712 345 678", half: true },
+    { id: "startDate", label: "Joined on", type: "date", value: r.startDate, half: true },
+    { id: "licenseExpiry", label: "Driving licence expires", type: "date", value: r.licenseExpiry, half: true },
+    { id: "psvBadgeExpiry", label: "PSV badge expires", type: "date", value: r.psvBadgeExpiry, half: true },
+    { id: "deposit", label: "Deposit held (KSh)", type: "number", value: r.deposit, half: true },
+    { id: "openingBalance", label: "Already owes (KSh)", type: "number", value: r.openingBalance, half: true, hint: "Arrears from before your start date" },
+    { id: "status", label: "Status", type: "select", options: [["active", "Active"], ["left", "Left the fleet"]], value: r.status || "active" },
+    { id: "notes", label: "Notes", type: "textarea", value: r.notes }
+  ], async v => {
+    if (!v.name) return "Enter the driver's name";
+    const ref = rec ? S.db.collection("drivers").doc(rec.id) : S.db.collection("drivers").doc();
+    return save(() => ref.set({ ...v, updatedAt: new Date().toISOString() }), rec ? "Driver updated" : "Driver added");
+  }, { onDelete: rec ? () => { if (S.assigns.some(a => a.driverId === rec.id) || all("payments").some(p => p.driverId === rec.id)) { toast("This driver has history. Set status to Left instead."); return false; } return save(() => S.db.collection("drivers").doc(rec.id).delete(), "Driver deleted"); } : null });
+}
+
+function formAssign(pre, rec) {
+  const T = todayStr(); const r = rec || {};
+  const carId = r.carId || (pre && pre.startsWith("car:") ? pre.slice(4) : "");
+  const driverId = r.driverId || (pre && pre.startsWith("driver:") ? pre.slice(7) : "");
+  const prevRate = carId && currentAssignForCar(carId) ? currentAssignForCar(carId).rate : "";
+  openForm(rec ? "Edit assignment" : "Assign driver to car", [
+    { id: "carId", label: "Car", type: "select", options: carOpts("Choose car"), value: carId, required: true },
+    { id: "driverId", label: "Driver", type: "select", options: driverOpts("Choose driver"), value: driverId, required: true },
+    { id: "rate", label: "Daily rate (KSh)", type: "number", value: r.rate ?? prevRate, required: true, half: true },
+    { id: "restDay", label: "Rest day", type: "select", options: [["", "No rest day"]].concat(DAYS.map((d, i) => [String(i), d])), value: r.restDay ?? "0", half: true },
+    { id: "start", label: "Starts on", type: "date", value: r.start || T, half: true },
+    { id: "end", label: "Ended on", type: "date", value: r.end || "", half: true, hint: "Leave empty while ongoing" }
+  ], async v => {
+    if (!v.carId || !v.driverId) return "Choose both the car and the driver";
+    if (!(v.rate > 0)) return "Enter the daily rate";
+    if (v.end && v.end < v.start) return "End date is before the start date";
+    const overlaps = (a) => a.id !== r.id && a.start <= (v.end || "9999") && (!a.end || a.end >= v.start);
+    const ops = [];
+    // Auto-close the open assignment for this car / this driver that started earlier
+    for (const a of S.assigns.filter(a => overlaps(a) && (a.carId === v.carId || a.driverId === v.driverId))) {
+      if (!a.end && a.start < v.start) ops.push(() => S.db.collection("assignments").doc(a.id).update({ end: addDays(v.start, -1) }));
+      else return `${a.carId === v.carId ? "This car" : "This driver"} already has an assignment from ${fmtDate(a.start)}${a.end ? " to " + fmtDate(a.end) : ""}. Edit that one first.`;
+    }
+    const ref = rec ? S.db.collection("assignments").doc(rec.id) : S.db.collection("assignments").doc();
+    return save(async () => { for (const op of ops) await op(); await ref.set({ ...v, restDay: v.restDay === "" ? "" : Number(v.restDay), updatedAt: new Date().toISOString() }); }, "Assignment saved");
+  }, { intro: rec ? "" : "If the car or driver already has an open assignment, it will end the day before this one starts.", onDelete: rec ? () => save(() => S.db.collection("assignments").doc(rec.id).delete(), "Assignment deleted") : null });
+}
+
+function formSettings() {
+  const st = S.settings;
+  openForm("Settings", [
+    { id: "name", label: "Business name", value: st.name },
+    { id: "trackStart", label: "Count balances and profit from", type: "date", value: st.trackStart || trackStart(), hint: "Usually the 1st of the month you start recording" },
+    { id: "warnDays", label: "Warn before documents expire (days)", type: "number", value: st.warnDays, half: true },
+    { id: "arrearsDays", label: "Arrears alert after (days unpaid)", type: "number", value: st.arrearsDays, half: true },
+    { id: "serviceIntervalKm", label: "Default service interval (km)", type: "number", value: st.serviceIntervalKm, half: true },
+    { id: "serviceWarnKm", label: "Warn before service (km)", type: "number", value: st.serviceWarnKm, half: true }
+  ], async v => {
+    if (!v.trackStart) return "Choose a start date";
+    return save(() => S.db.doc("settings/main").set({ ...v, updatedAt: new Date().toISOString() }), "Settings saved");
+  });
+}
+
+function quickAdd() {
+  openSheet("Add a record", `<div class="list">
+    ${[["new-payment", "Payment received", "Daily fee from a driver"], ["new-expense", "Expense", "Service, repairs, insurance, fines"], ["new-downtime", "Off-road days", "Garage, accident, no driver"], ["new-odo", "Mileage reading", "Weekly odometer"], ["new-car", "Car", "Add a car to the fleet"], ["new-driver", "Driver", "Add a new driver"], ["new-assign", "Assign driver", "Hand a car to a driver"]].map(([a, t, d]) => `<div class="li" data-action="${a}" style="cursor:pointer"><div class="main"><div class="t">${t}</div><div class="small muted">${d}</div></div><div class="end muted">›</div></div>`).join("")}
+  </div>`);
+}
+
+/* ============ Events ============ */
+function toast(t) { const el = document.getElementById("toast"); el.textContent = t; el.style.display = "block"; clearTimeout(toast._t); toast._t = setTimeout(() => el.style.display = "none", 2800); }
+
+function findRec(kind, id, m) { return ((S.months[m] || {})[kind] || []).find(r => r.id === id); }
+
+document.addEventListener("click", async e => {
+  const el = e.target.closest("[data-action]"); if (!el) return;
+  const a = el.dataset.action, v = el.dataset.v;
+  if (el.tagName === "INPUT" || el.tagName === "SELECT") return;
+  if (el.tagName === "A") return;
+  e.preventDefault();
+  switch (a) {
+    case "period": S.period = v; render(); break;
+    case "more-tab": S.moreTab = v; render(); break;
+    case "go": S.detail = null; location.hash = v; break;
+    case "back": S.detail = null; render(); break;
+    case "open": { const [k, id] = v.split(":"); S.detail = v; closeSheet(); const tab = k === "car" ? "cars" : "drivers"; if (location.hash !== "#" + tab) location.hash = tab; else render(); window.scrollTo(0, 0); break; }
+    case "close": closeSheet(); break;
+    case "quick-add": quickAdd(); break;
+    case "new-payment": formPayment(v); break;
+    case "new-expense": formExpense(v); break;
+    case "new-downtime": formDowntime(v); break;
+    case "new-odo": formOdo(v); break;
+    case "new-car": formCar(); break;
+    case "new-driver": formDriver(); break;
+    case "new-assign": formAssign(v); break;
+    case "edit-settings": formSettings(); break;
+    case "edit-car": formCar(S.cars.find(c => c.id === v)); break;
+    case "edit-driver": formDriver(S.drivers.find(d => d.id === v)); break;
+    case "edit-assign": formAssign(null, S.assigns.find(x => x.id === v)); break;
+    case "edit-rec": { const k = el.dataset.k, rec = findRec(k, v, el.dataset.m); if (!rec) break; ({ payments: () => formPayment(null, rec), expenses: () => formExpense(null, rec), downtime: () => formDowntime(null, rec), odo: () => formOdo(null, rec) })[k](); break; }
+    case "statement": openStatement(v); break;
+    case "copy-stmt": try { await navigator.clipboard.writeText(document.getElementById("stmt-text").textContent); toast("Statement copied"); } catch (er) { toast("Copy blocked. Select the text and copy it."); } break;
+    case "form-delete": if (el.dataset.confirm) { const r = await FORM.onDelete(); if (r !== false) closeSheet(); } else { el.dataset.confirm = "1"; el.textContent = "Tap again to delete"; } break;
+    case "imp-reset": if (IMP) { IMP = null; render(); } else { location.hash = "more"; } break;
+    case "imp-go": runImport(); break;
+    case "signout": firebase.auth().signOut().then(() => location.reload()); break;
+    case "reset-pass": { const em = document.getElementById("login-email").value.trim(); if (!em) { document.getElementById("login-err").textContent = "Type your email first, then tap Forgot password."; break; } try { await firebase.auth().sendPasswordResetEmail(em); document.getElementById("login-err").textContent = "Password reset email sent to " + em; } catch (er) { document.getElementById("login-err").textContent = authMsg(er); } break; }
+  }
+});
+document.addEventListener("change", e => {
+  const el = e.target;
+  if (el.id === "imp-file" && el.files[0]) handleImportFile(el.files[0]);
+  if (el.dataset.action === "imp-toggle") { IMP.rows[+el.dataset.v].include = el.checked; render(); }
+  if (el.dataset.action === "imp-driver") { const r = IMP.rows[+el.dataset.v]; r.driverId = el.value; r.how = el.value ? "you" : ""; r.include = !!el.value && !r.dup && !!r.date; render(); }
+});
+document.addEventListener("submit", async e => {
+  if (e.target.id === "login-form") {
+    e.preventDefault();
+    try { await firebase.auth().signInWithEmailAndPassword(document.getElementById("login-email").value.trim(), document.getElementById("login-pass").value); }
+    catch (er) { document.getElementById("login-err").textContent = authMsg(er); }
+    return;
+  }
+  if (e.target.id !== "the-form") return;
+  e.preventDefault();
+  const btn = e.target.querySelector('button[type="submit"]'); btn.disabled = true;
+  const res = await FORM.onSubmit(formVals());
+  btn.disabled = false;
+  if (typeof res === "string") { document.getElementById("form-err").textContent = res; return; }
+  if (res) closeSheet();
+});
+document.getElementById("scrim").addEventListener("click", closeSheet);
+document.addEventListener("keydown", e => { if (e.key === "Escape") closeSheet(); });
+
+function route() {
+  const h = (location.hash || "#home").slice(1);
+  const valid = ["home", "collect", "cars", "drivers", "more", "import", "settings"];
+  const nv = valid.includes(h) ? h : "home";
+  if (nv !== S.view) { if (!(S.detail && ((nv === "cars" && S.detail.startsWith("car:")) || (nv === "drivers" && S.detail.startsWith("driver:"))))) S.detail = null; }
+  S.view = nv;
+  render();
+}
+window.addEventListener("hashchange", route);
+S.view = (location.hash || "#home").slice(1) || "home";
+boot();
+</script>
+</body>
+</html>

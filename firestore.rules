@@ -1,0 +1,19 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // People allowed to see and change the fleet data.
+    // Use lowercase emails exactly as created in Firebase Authentication.
+    function isFamily() {
+      return request.auth != null
+        && request.auth.token.email.lower() in [
+          'owner@example.com',
+          'family.member@example.com'
+        ];
+    }
+
+    match /{document=**} {
+      allow read, write: if isFamily();
+    }
+  }
+}
