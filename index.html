@@ -3,22 +3,33 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Fleet Ledger</title>
+<title>DRYV</title>
+<meta name="theme-color" content="#0E1116">
+<meta name="apple-mobile-web-app-title" content="DRYV">
+<meta name="application-name" content="DRYV">
+<meta name="mobile-web-app-capable" content="yes">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='16' fill='%230E1116'/%3E%3Cpath d='M17 14 H34 L50 32 L34 50 H17 Z' fill='%23fff'/%3E%3Cpath d='M17 27 H31 L35 32 L31 37 H17 Z' fill='%23F5A524'/%3E%3C/svg%3E">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<link rel="manifest" href="manifest.webmanifest">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@600;700;800&family=IBM+Plex+Mono:wght@500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Michroma&family=Manrope:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@500;600&display=swap" rel="stylesheet">
 <style>
 /* Layout idea: phone-first operations ledger. Summary strip -> attention list -> tables. Bottom tab bar, sheets for data entry. Plates styled as Kenyan rear plates. */
 :root {
+  /* DRYV identity: graphite + white, signal blue for actions, ice blue for calm accents, amber for the forward mark. Wide futuristic display type over a clean geometric body. */
   color-scheme: light;
-  --bg: #f2f4f3;
+  --bg: #f3f6f9;
   --surface: #ffffff;
-  --ink: #14201e;
-  --muted: #5b6866;
-  --line: #dde3e1;
-  --accent: #0f5b66;
+  --ink: #0e1116;
+  --muted: #5a6573;
+  --line: #dfe5ec;
+  --accent: #1e6fb8;
   --accent-ink: #ffffff;
-  --accent-soft: #e2eff0;
+  --accent-soft: #e4f0fa;
+  --ice: #8ccbea;
+  --amber: #f5a524;
+  --graphite: #0e1116;
   --plate: #f5c518;
   --plate-ink: #111111;
   --good: #1d7a3e;
@@ -29,24 +40,24 @@
   --bad-soft: #fbe6e4;
   --series-1: #2a78d6;
   --series-2: #eb6834;
-  --font-display: "Archivo", "Helvetica Neue", Arial, sans-serif;
-  --font-body: "IBM Plex Sans", "Segoe UI", Roboto, Arial, sans-serif;
+  --font-display: "Michroma", "Eurostile", "Arial Black", sans-serif;
+  --font-body: "Manrope", "Segoe UI", Roboto, Arial, sans-serif;
   --font-mono: "IBM Plex Mono", ui-monospace, Menlo, Consolas, monospace;
-  --radius: 10px;
+  --radius: 14px;
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
     color-scheme: dark;
-    --bg: #0f1514; --surface: #182120; --ink: #e8efed; --muted: #9fb0ad; --line: #2b3735;
-    --accent: #4fb3bf; --accent-ink: #06201f; --accent-soft: #1c3335;
+    --bg: #0b0e12; --surface: #151a21; --ink: #e8eef4; --muted: #9aa8b6; --line: #262e38;
+    --accent: #5aa9e6; --accent-ink: #06121f; --accent-soft: #15283a; --ice: #8ccbea;
     --good: #5cc282; --good-soft: #17301f; --warn: #e3ad4a; --warn-soft: #33280f; --bad: #f07b72; --bad-soft: #3a1b18;
     --series-1: #3987e5; --series-2: #d95926;
   }
 }
 :root[data-theme="dark"] {
   color-scheme: dark;
-  --bg: #0f1514; --surface: #182120; --ink: #e8efed; --muted: #9fb0ad; --line: #2b3735;
-  --accent: #4fb3bf; --accent-ink: #06201f; --accent-soft: #1c3335;
+  --bg: #0b0e12; --surface: #151a21; --ink: #e8eef4; --muted: #9aa8b6; --line: #262e38;
+  --accent: #5aa9e6; --accent-ink: #06121f; --accent-soft: #15283a; --ice: #8ccbea;
   --good: #5cc282; --good-soft: #17301f; --warn: #e3ad4a; --warn-soft: #33280f; --bad: #f07b72; --bad-soft: #3a1b18;
   --series-1: #3987e5; --series-2: #d95926;
 }
@@ -55,10 +66,17 @@ html, body { height: 100%; margin: 0; }
 body { background: var(--bg); color: var(--ink); font: 15px/1.45 var(--font-body); -webkit-font-smoothing: antialiased; }
 button, input, select, textarea { font: inherit; color: inherit; }
 :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-h1, h2, h3 { font-family: var(--font-display); margin: 0; text-wrap: balance; letter-spacing: -0.01em; }
-h1 { font-size: 20px; font-weight: 800; }
-h2 { font-size: 17px; font-weight: 700; }
-h3 { font-size: 15px; font-weight: 700; }
+h1, h2, h3 { margin: 0; text-wrap: balance; }
+h1, h2 { font-family: var(--font-display); font-weight: 400; text-transform: uppercase; letter-spacing: 0.04em; }
+h1 { font-size: 18px; }
+h2 { font-size: 14px; line-height: 1.35; }
+h3 { font-family: var(--font-body); font-size: 15px; font-weight: 700; }
+.two-tone { color: var(--accent); }
+/* Brand lockup */
+.logo { display: flex; align-items: center; gap: 10px; color: var(--ink); }
+.logo .sym { width: 34px; height: 34px; flex: none; }
+.logo .word { height: 18px; width: auto; }
+header.top .brand { gap: 4px; }
 .num { font-variant-numeric: tabular-nums; }
 .muted { color: var(--muted); }
 .small { font-size: 13px; }
@@ -67,13 +85,20 @@ h3 { font-size: 15px; font-weight: 700; }
 header.top { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 16px 0 12px; }
 header.top .brand { display: flex; flex-direction: column; }
 header.top .brand span { font-size: 12px; color: var(--muted); }
+.login-hero { max-width: 440px; margin: 28px auto 0; padding: 22px; border-radius: 20px; color: #fff; background:
+  radial-gradient(120% 90% at 100% 0%, rgba(140,203,234,0.55), transparent 60%), linear-gradient(160deg, #0e1116 0%, #16314c 70%, #1e6fb8 120%); }
+.login-hero .hero-title { font-size: 21px; line-height: 1.35; color: #fff; }
+.login-hero .two-tone { color: var(--ice); }
+.login-hero .muted { color: rgba(255,255,255,0.75); }
 .banner { padding: 10px 12px; border-radius: var(--radius); background: var(--warn-soft); color: var(--ink); border: 1px solid var(--line); margin-bottom: 12px; font-size: 14px; }
 
 nav.tabs { position: fixed; left: 0; right: 0; bottom: 0; background: var(--surface); border-top: 1px solid var(--line); display: flex; justify-content: center; z-index: 20; padding-bottom: env(safe-area-inset-bottom); }
 nav.tabs .inner { display: grid; grid-template-columns: repeat(5, 1fr); width: 100%; max-width: 600px; }
 nav.tabs a { text-decoration: none; color: var(--muted); display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 8px 4px 10px; font-size: 12px; font-weight: 500; }
 nav.tabs a svg { width: 22px; height: 22px; }
+nav.tabs a { position: relative; }
 nav.tabs a.on { color: var(--accent); }
+nav.tabs a.on::before { content: ""; position: absolute; top: 0; left: 30%; right: 30%; height: 3px; border-radius: 0 0 3px 3px; background: var(--amber); }
 
 .section { margin: 16px 0; display: flex; flex-direction: column; gap: 10px; }
 .section-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
@@ -81,7 +106,7 @@ nav.tabs a.on { color: var(--accent); }
 .grid { display: grid; gap: 10px; }
 .kpis { grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); }
 .kpi .label { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; font-weight: 600; }
-.kpi .value { font-family: var(--font-display); font-size: 24px; font-weight: 700; margin-top: 2px; }
+.kpi .value { font-family: var(--font-body); font-size: 25px; font-weight: 800; margin-top: 2px; letter-spacing: -0.01em; font-variant-numeric: tabular-nums; }
 .kpi .sub { font-size: 13px; color: var(--muted); }
 .meter { height: 6px; background: var(--line); border-radius: 3px; overflow: hidden; margin-top: 8px; }
 .meter > i { display: block; height: 100%; background: var(--accent); border-radius: 3px; }
@@ -133,7 +158,7 @@ tr.click:hover td { background: var(--accent-soft); }
 .step { display: flex; gap: 12px; align-items: flex-start; }
 .step b.n { flex: 0 0 26px; height: 26px; border-radius: 50%; background: var(--accent); color: var(--accent-ink); display: grid; place-items: center; font-size: 13px; }
 
-.fab { position: fixed; right: max(16px, calc(50% - 534px)); bottom: 78px; z-index: 21; width: 56px; height: 56px; border-radius: 50%; border: 0; background: var(--accent); color: var(--accent-ink); font-size: 28px; line-height: 1; cursor: pointer; box-shadow: 0 6px 18px rgba(0,0,0,0.22); }
+.fab { position: fixed; right: max(16px, calc(50% - 534px)); bottom: 78px; z-index: 21; width: 56px; height: 56px; border-radius: 50%; border: 0; background: var(--graphite); color: var(--amber); font-size: 30px; line-height: 1; cursor: pointer; box-shadow: 0 6px 18px rgba(0,0,0,0.22); }
 
 .chart { width: 100%; height: auto; display: block; }
 .chart text { fill: var(--muted); font-size: 11px; font-family: var(--font-body); }
@@ -167,7 +192,7 @@ pre.stmt { white-space: pre-wrap; background: var(--bg); border: 1px solid var(-
 <body>
 <div class="app">
   <header class="top">
-    <div class="brand"><h1 id="biz-name">Fleet Ledger</h1><span id="today-label"></span></div>
+    <div class="brand"><div class="logo"><svg class="sym" viewBox="0 0 64 64" aria-hidden="true"><rect width="64" height="64" rx="16" fill="#0E1116"/><path d="M17 14 H34 L50 32 L34 50 H17 Z" fill="#fff"/><path d="M17 27 H31 L35 32 L31 37 H17 Z" fill="#F5A524"/></svg><svg class="word" viewBox="-3 -3 156 46" role="img" aria-label="DRYV"><g fill="none" stroke="currentColor" stroke-width="6" stroke-linejoin="miter" stroke-linecap="butt"><path d="M3 0 V40 M0 3 H22 L36 20 L22 37 H0"/><path d="M48 40 V3 H68 A9 9 0 0 1 68 21 H51 M64 21 L77 40"/><path d="M83 0 L98 19 L113 0 M98 19 V40"/><path d="M119 0 L134 37 L149 0" stroke="#F5A524"/></g></svg></div><span><b id="biz-name"></b><span id="biz-sep" style="display:none"> · </span><span id="today-label"></span></span></div>
     <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px"><div id="sync" class="small muted">Connecting…</div><button class="btn sm" id="signout" style="display:none" data-action="signout">Sign out</button></div>
   </header>
   <div id="banner"></div>
@@ -222,7 +247,7 @@ const DOWN_REASONS = [
 const METHODS = ["M-Pesa Till", "M-Pesa Paybill", "M-Pesa (personal)", "Cash", "Bank", "Deposit", "Refund"];
 const adjTotal = d => (Array.isArray(d.adjustments) ? d.adjustments : []).reduce((t, a) => t + (Number(a.amount) || 0), 0);
 const isLeft = id => { const r = driverById(id); return !!(r && r.status === "left"); };
-const DEFAULT_SETTINGS = { name: "Fleet Ledger", trackStart: "", warnDays: 30, arrearsDays: 2, serviceWarnKm: 500, serviceIntervalKm: 5000 };
+const DEFAULT_SETTINGS = { name: "", trackStart: "", warnDays: 30, arrearsDays: 2, serviceWarnKm: 500, serviceIntervalKm: 5000 };
 
 /* ============ Date & format helpers ============ */
 const todayStr = () => new Intl.DateTimeFormat("en-CA", { timeZone: TZ, year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
@@ -535,7 +560,11 @@ async function boot() {
 }
 
 function viewLogin(msg) {
-  document.getElementById("view").innerHTML = `<div class="card" style="max-width:420px;margin:24px auto">
+  document.querySelector("nav.tabs").style.display = "none";
+  document.getElementById("view").innerHTML = `<div class="login-hero">
+    <h1 class="hero-title"><span class="two-tone">Every car.</span><br>Every shilling.<br><span class="two-tone">Any moment.</span></h1>
+    <p class="muted" style="margin:10px 0 0;max-width:34ch">Daily payments, driver balances and car profit for your ride-hailing fleet.</p></div>
+  <div class="card" style="max-width:440px;margin:18px auto 24px">
     <h2 style="margin-bottom:6px">Sign in</h2><p class="small muted" style="margin-top:0">Use the email and password the fleet owner set up for you.</p>
     <form class="f" id="login-form" novalidate>
       <label class="fl" for="login-email">Email<input id="login-email" type="email" autocomplete="username" required></label>
@@ -555,6 +584,7 @@ function authMsg(e) {
 
 function startData(db) {
   if (S.db) return;
+  document.querySelector("nav.tabs").style.display = "";
   S.db = db;
   const timer = setTimeout(() => setSync("Can't reach the data yet. Check your connection."), 10000);
   const onErr = e => {
@@ -580,7 +610,7 @@ function startData(db) {
     confirmKey("settings", snap);
     S.settings = { ...DEFAULT_SETTINGS, ...(snap.exists ? snap.data() : {}) };
     S.coreReady.settings = true;
-    document.getElementById("biz-name").textContent = S.settings.name || "Fleet Ledger";
+    document.getElementById("biz-name").textContent = S.settings.name || ""; document.getElementById("biz-sep").style.display = S.settings.name ? "" : "none";
     afterCore();
   }, onErr));
   S.subs.push(db.collection("submissions").where("status", "==", "pending").onSnapshot(snap => { S.pending = snapRows(snap); render(); }, () => {}));
@@ -1050,7 +1080,7 @@ function statementText(id) {
   const pays = all("payments").filter(p => p.driverId === id && p.date >= from).sort((a, b) => a.date.localeCompare(b.date));
   const chg = all("expenses").filter(x => x.chargeDriver && x.driverId === id && x.date >= from);
   const lines = [];
-  lines.push(`${S.settings.name || "Fleet"}: statement for ${d.name}`);
+  lines.push(`${S.settings.name || "DRYV"}: statement for ${d.name}`);
   if (d.assign) lines.push(`Car ${carLabel(d.assign.carId)} · ${ksh(d.rate)} per day`);
   lines.push(`As at ${fmtDate(T)}`);
   if (d.days.charged) { lines.push(`Days to pay for since ${fmtShort(d.days.first)}: ${d.days.charged} · paid: ${d.days.paidDays} · unpaid: ${Math.max(0, d.days.unpaidDays)}`); if (d.days.paidUpTo && d.days.unpaidDays > 0) lines.push(`Paid up to ${fmtDate(d.days.paidUpTo)}`); }
@@ -1330,7 +1360,7 @@ function buildSummary(d) {
   const pays = all("payments").filter(p => p.driverId === d.id).sort((a, b) => b.date.localeCompare(a.date)).slice(0, 20).map(p => ({ date: p.date, amount: Number(p.amount) || 0, ref: p.ref || "" }));
   const since = addDays(todayStr(), -60);
   const chg = all("expenses").filter(x => x.chargeDriver && x.driverId === d.id && x.date >= since).sort((a, b) => b.date.localeCompare(a.date)).slice(0, 10).map(x => ({ date: x.date, category: x.category || "", amount: Number(x.amount) || 0, note: x.note || "" }));
-  return { driverId: d.id, name: d.name || "", bizName: S.settings.name || "Fleet Ledger", plate: d.assign ? carLabel(d.assign.carId) : "", rate: d.rate || 0, restDay: d.assign ? d.assign.restDay : "", balance: Math.round(d.balance), daysBehind: Math.round((d.daysBehind || 0) * 10) / 10, asOf: todayStr(), payments: pays, charges: chg, credits: all("expenses").filter(x => x.paidByDriver && x.driverId === d.id && x.date >= since).sort((a, b) => b.date.localeCompare(a.date)).slice(0, 10).map(x => ({ date: x.date, category: x.category || "", amount: Number(x.amount) || 0, note: x.note || "" })), days: { first: d.days.first || "", worked: d.days.worked, charged: d.days.charged, paid: d.days.paidDays, unpaid: Math.max(0, d.days.unpaidDays), paidUpTo: d.days.paidUpTo || "" } };
+  return { driverId: d.id, name: d.name || "", bizName: S.settings.name || "", plate: d.assign ? carLabel(d.assign.carId) : "", rate: d.rate || 0, restDay: d.assign ? d.assign.restDay : "", balance: Math.round(d.balance), daysBehind: Math.round((d.daysBehind || 0) * 10) / 10, asOf: todayStr(), payments: pays, charges: chg, credits: all("expenses").filter(x => x.paidByDriver && x.driverId === d.id && x.date >= since).sort((a, b) => b.date.localeCompare(a.date)).slice(0, 10).map(x => ({ date: x.date, category: x.category || "", amount: Number(x.amount) || 0, note: x.note || "" })), days: { first: d.days.first || "", worked: d.days.worked, charged: d.days.charged, paid: d.days.paidDays, unpaid: Math.max(0, d.days.unpaidDays), paidUpTo: d.days.paidUpTo || "" } };
 }
 let summaryBusy = false;
 async function syncSummaries() {
@@ -1365,7 +1395,7 @@ function startDriver(db, id) {
 }
 function renderDriver() {
   const v = document.getElementById("view"), s = S.dsum;
-  document.getElementById("biz-name").textContent = (s && s.bizName) || "Fleet Ledger";
+  document.getElementById("biz-name").textContent = (s && s.bizName) || ""; document.getElementById("biz-sep").style.display = s && s.bizName ? "" : "none";
   const subs = S.mySubs || [];
   const waiting = subs.filter(x => x.status === "pending" && x.type === "payment").reduce((t, x) => t + (Number(x.amount) || 0), 0);
   const subLine = x => {

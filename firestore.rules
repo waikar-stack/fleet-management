@@ -2,18 +2,48 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // People allowed to see and change the fleet data.
-    // Use lowercase emails exactly as created in Firebase Authentication.
-    function isFamily() {
-      return request.auth != null
-        && request.auth.token.email.lower() in [
-          'owner@example.com',
-          'family.member@example.com'
-        ];
+    function email() {
+      return request.auth.token.email.lower();
     }
 
+    // FAMILY: full access. Replace these with your family's real emails (lowercase).
+    function isFamily() {
+      return request.auth != null && email() in [
+        'owner@example.com',
+        'family.member@example.com'
+      ];
+    }
+
+    // DRIVERS: linked to a driver record by the "Driver app login email" field in the app.
+    function isDriver(driverId) {
+      return request.auth != null
+        && exists(/databases/$(database)/documents/driverLogins/$(email()))
+        && get(/databases/$(database)/documents/driverLogins/$(email())).data.driverId == driverId;
+    }
+
+    // Family can read and write everything
     match /{document=**} {
       allow read, write: if isFamily();
+    }
+
+    // A signed-in person can check whether their own email is linked to a driver
+    match /driverLogins/{loginEmail} {
+      allow read: if request.auth != null && loginEmail == email();
+    }
+
+    // A driver can read only their own balance summary
+    match /driverSummaries/{driverId} {
+      allow read: if isDriver(driverId);
+    }
+
+    // A driver can read their own updates and send new ones, but never edit or delete
+    match /submissions/{id} {
+      allow read: if isDriver(resource.data.driverId);
+      allow create: if isDriver(request.resource.data.driverId)
+        && request.resource.data.status == 'pending'
+        && request.resource.data.type in ['payment', 'mileage', 'issue']
+        && request.resource.data.keys().hasOnly(['driverId', 'type', 'status', 'createdAt', 'amount', 'date', 'ref', 'km', 'issue', 'offRoad', 'note'])
+        && request.resource.data.get('note', '').size() <= 500;
     }
   }
 }
