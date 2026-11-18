@@ -278,6 +278,12 @@ function assignOn(carId, date) {
 function driverAssignOn(driverId, date) {
   return S.assigns.find(a => a.driverId === driverId && a.start <= date && (!a.end || a.end >= date));
 }
+// Which car a payment belongs to: the car the driver had that day, else their most recent car before it
+function payCar(p) {
+  const a = driverAssignOn(p.driverId, p.date); if (a) return a.carId;
+  const prev = S.assigns.filter(x => x.driverId === p.driverId && x.start <= p.date).sort((x, y) => y.start.localeCompare(x.start))[0];
+  return prev ? prev.carId : p.carId || "";
+}
 function currentAssignForDriver(id) { return driverAssignOn(id, todayStr()); }
 function currentAssignForCar(id) { return assignOn(id, todayStr()); }
 
@@ -353,7 +359,8 @@ function compute() {
     if (!dst.lastPay || x.date > dst.lastPay) dst.lastPay = x.date;
     if (inP(x.date)) dst.payP += amt;
     fInit(monthOf(x.date)).rev += amt;
-    if (x.carId) { const c = cInit(x.carId); c.revAll += amt; c.revM[monthOf(x.date)] = (c.revM[monthOf(x.date)] || 0) + amt; if (inP(x.date)) c.revP += amt; }
+    const pc = payCar(x);
+    if (pc) { const c = cInit(pc); c.revAll += amt; c.revM[monthOf(x.date)] = (c.revM[monthOf(x.date)] || 0) + amt; if (inP(x.date)) c.revP += amt; }
   }
   for (const x of all("expenses")) {
     if (x.date < TS) continue;
@@ -421,7 +428,10 @@ function compute() {
       ...c, ...s, assign: a, driver: a ? driverById(a.driverId) : null, net, netAll, price,
       util: s.denomP ? s.earnP / s.denomP : NaN, collRate: s.expP ? s.revP / s.expP : NaN,
       payback: price ? netAll / price : NaN, monthsLeft: price && remain > 0 && avgNet > 0 ? remain / avgNet : (price && remain <= 0 ? 0 : NaN),
-      costPerKm: s.kmP ? s.costP / s.kmP : NaN, odo: o, status, statusLabel, downToday: today
+      costPerKm: s.kmP ? s.costP / s.kmP : NaN, odo: o, status, statusLabel, downToday: today,
+      periodDrivers: S.assigns.filter(x => x.carId === c.id && x.start <= to && (!x.end || x.end >= from)).sort((x, y) => x.start.localeCompare(y.start))
+        .map(x => ({ id: x.driverId, name: driverName(x.driverId), s: x.start < from ? from : x.start, e: !x.end || x.end > to ? to : x.end, full: x.start <= from && (!x.end || x.end >= to), rate: Number(x.rate) || 0,
+          paid: all("payments").filter(p => p.driverId === x.driverId && payCar(p) === c.id && inP(p.date)).reduce((t, p) => t + (Number(p.amount) || 0), 0) }))
     };
   });
 
@@ -439,7 +449,7 @@ function compute() {
   // Fleet totals for period
   const tot = cars.reduce((t, c) => { t.rev += c.revP; t.cost += c.costP; t.exp += c.expP; t.earn += c.earnP; t.denom += c.denomP; return t; }, { rev: 0, cost: 0, exp: 0, earn: 0, denom: 0 });
   // payments with no car still count as revenue
-  const unassignedRev = all("payments").filter(p => !p.carId && inP(p.date) && p.date >= TS).reduce((t, p) => t + (Number(p.amount) || 0), 0);
+  const unassignedRev = all("payments").filter(p => !payCar(p) && inP(p.date) && p.date >= TS).reduce((t, p) => t + (Number(p.amount) || 0), 0);
   tot.rev += unassignedRev;
   tot.net = tot.rev - tot.cost;
   tot.arrears = drivers.filter(d => d.balance > 0).reduce((t, d) => t + d.balance, 0);
@@ -730,7 +740,7 @@ function carTable(cars) {
   if (!cars.length) return `<div class="card empty">No cars yet.</div>`;
   const rows = [...cars].sort((a, b) => b.net - a.net).map(c => `<tr class="click" data-action="open" data-v="car:${c.id}">
     <td>${plate(c.plate)}<div class="small muted">${esc([c.make, c.model].filter(Boolean).join(" "))}</div></td>
-    <td>${c.driver ? esc(c.driver.name) : `<span class="muted">—</span>`}<div>${pill(c.status, c.statusLabel)}</div></td>
+    <td>${periodDriversHtml(c)}${S.calc && S.calc.P.to === S.calc.T ? `<div>${pill(c.status, c.statusLabel)}</div>` : ""}</td>
     <td class="r">${ksh(c.revP)}<div class="small muted">${pct(c.collRate)} of due</div></td>
     <td class="r">${ksh(c.costP)}</td>
     <td class="r"><b style="color:${c.net < 0 ? "var(--bad)" : "inherit"}">${ksh(c.net)}</b></td>
@@ -738,9 +748,15 @@ function carTable(cars) {
     <td class="r">${isFinite(c.costPerKm) ? "KSh " + c.costPerKm.toFixed(1) : "—"}</td>
     <td class="r">${isFinite(c.payback) ? pct(c.payback) : "—"}<div class="small muted">${isFinite(c.monthsLeft) ? (c.monthsLeft === 0 ? "Paid back" : "~" + Math.ceil(c.monthsLeft) + " mo left") : ""}</div></td>
   </tr>`).join("");
-  return `<div class="table-wrap"><table><thead><tr><th>Car</th><th>Driver</th><th class="r">Collected</th><th class="r">Costs</th><th class="r">Net</th><th class="r">Utilisation</th><th class="r">Cost/km</th><th class="r">Paid back</th></tr></thead><tbody>${rows}</tbody></table></div>`;
+  return `<div class="table-wrap"><table><thead><tr><th>Car</th><th>Drivers</th><th class="r">Collected</th><th class="r">Costs</th><th class="r">Net</th><th class="r">Utilisation</th><th class="r">Cost/km</th><th class="r">Paid back</th></tr></thead><tbody>${rows}</tbody></table></div>`;
 }
 
+function periodDriversHtml(c) {
+  const pd = c.periodDrivers || [];
+  if (!pd.length) return `<span class="muted">—</span>`;
+  const T = S.calc ? S.calc.T : todayStr();
+  return pd.map(p => `<div>${esc(p.name)}${pd.length > 1 || !p.full ? `<div class="small muted">${fmtShort(p.s)} – ${p.e === T ? "now" : fmtShort(p.e)}</div>` : ""}</div>`).join("");
+}
 function driverList(ds) {
   if (!ds.length) return `<div class="card empty">No drivers yet.</div>`;
   return `<div class="list">${ds.map(d => `<div class="li" data-action="open" data-v="driver:${d.id}" style="cursor:pointer">
@@ -810,6 +826,7 @@ function carDetail(c, id) {
     <div class="card kpi"><div class="label">Net</div><div class="value num">${ksh(car.net)}</div></div>
     <div class="card kpi"><div class="label">Utilisation</div><div class="value num">${pct(car.util)}</div><div class="sub">${car.downP} off-road, ${car.idleP} idle days</div></div>
   </div>
+  <div class="card"><h3 style="margin-bottom:6px">Drivers in this period</h3>${car.periodDrivers.length ? `<div class="list" style="border:0">${car.periodDrivers.map(p => `<div class="li" data-action="open" data-v="driver:${p.id}" style="cursor:pointer;padding:8px 0"><div class="main"><div class="t">${esc(p.name)}</div><div class="small muted">${fmtDate(p.s)} → ${p.e === S.calc.T ? "now" : fmtDate(p.e)} · ${ksh(p.rate)}/day</div></div><div class="end"><b class="num">${ksh(p.paid)}</b><span class="small muted">paid</span></div></div>`).join("")}</div>` : `<div class="small muted">No driver had this car in this period.</div>`}</div>
   <h3>Driver history</h3>
   <div class="list">${hist.map(a => `<div class="li"><div class="main"><div class="t">${esc(driverName(a.driverId))}</div><div class="small muted">${fmtDate(a.start)} → ${a.end ? fmtDate(a.end) : "now"} · ${ksh(a.rate)}/day · rest day ${a.restDay === "" || a.restDay == null ? "none" : DAYS[a.restDay]}</div></div>${S.canWrite ? `<div class="end"><button class="btn sm" data-action="edit-assign" data-v="${a.id}">Edit</button></div>` : ""}</div>`).join("") || `<div class="empty">No drivers assigned yet.</div>`}</div>
   <h3>Recent expenses</h3>${recordList("expenses", recs("expenses"))}
