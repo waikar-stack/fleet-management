@@ -857,7 +857,11 @@ function driverDetail(c, id) {
 
 function daysCard(d) {
   const x = d.days;
-  if (!x.asg.length) return `<div class="card small"><h3>Days worked and paid</h3><p class="muted">No car assignment is recorded for this driver, so no days can be counted and every payment shows as credit. Use <b>Assign to car</b> to add each period they had a car, with its start and end dates.</p></div>`;
+  if (!x.asg.length) {
+    const pd = all("payments").filter(p => p.driverId === d.id && Number(p.amount) > 0 && p.method !== "Deposit").map(p => p.date).sort();
+    return `<div class="card small"><h3>Days worked and paid</h3><p class="muted">No car assignment is recorded for this driver, so no days can be counted and every payment shows as credit. Add each period they had a car, with its start and end dates.</p>
+    ${pd.length && S.canWrite ? `<button class="btn primary sm" data-action="assign-from-pays" data-v="${d.id}">Add assignment from payment dates (${fmtShort(pd[0])} → ${fmtShort(pd[pd.length - 1])})</button>` : ""}</div>`;
+  }
   const cell = (l, v, sub, color) => `<div><span>${l}</span><b style="${color ? "color:" + color : ""}">${v}</b>${sub ? `<div class="small muted">${sub}</div>` : ""}</div>`;
   const paidLine = x.unpaidDays > 0 ? `Paid up to ${x.paidUpTo ? fmtDate(x.paidUpTo) : "— (no full day paid yet)"}${x.partial ? ", plus " + ksh(x.partial) + " towards the next day" : ""}` : x.aheadDays >= 0.1 ? `All days paid, plus about ${x.aheadDays.toFixed(1)} days in advance` : "All days paid";
   const rows = x.asg.map(a => `<tr><td>${plate(carLabel(a.carId))}</td><td class="small">${fmtShort(a.first || a.start)} → ${a.end && a.end <= todayStr() ? fmtShort(a.end) : "now"}</td><td class="r">${ksh(a.rate)}</td><td class="r">${a.days}</td><td class="r">${a.rest}</td><td class="r">${a.off}</td><td class="r">${a.worked}</td><td class="r">${a.charged}</td><td class="r">${ksh(a.due)}</td></tr>`).join("");
@@ -1179,13 +1183,14 @@ function formDriver(rec) {
   }, { onDelete: rec ? () => { if (S.assigns.some(a => a.driverId === rec.id) || all("payments").some(p => p.driverId === rec.id)) { toast("This driver has history. Set status to Left instead."); return false; } return save(() => S.db.collection("drivers").doc(rec.id).delete(), "Driver deleted"); } : null });
 }
 
-function formAssign(pre, rec) {
-  const T = todayStr(); const r = rec || {};
+function formAssign(pre, rec, ext = {}) {
+  const T = todayStr(); const r = rec || ext.prefill || {};
   const carId = r.carId || (pre && pre.startsWith("car:") ? pre.slice(4) : "");
   const driverId = r.driverId || (pre && pre.startsWith("driver:") ? pre.slice(7) : "");
   const prevRate = carId && currentAssignForCar(carId) ? currentAssignForCar(carId).rate : "";
-  openForm(rec ? "Edit assignment" : "Assign driver to car", [
-    { id: "carId", label: "Car", type: "select", options: carOpts("Choose car"), value: carId, required: true },
+  const carChoices = ext.prefill ? [["", "Choose car"]].concat(S.cars.map(c => [c.id, c.plate + (c.soldDate && c.soldDate <= T ? " (sold)" : "") + (c.make ? " · " + c.make + " " + (c.model || "") : "")])) : carOpts("Choose car");
+  openForm(rec ? "Edit assignment" : ext.title || "Assign driver to car", [
+    { id: "carId", label: "Car", type: "select", options: carChoices, value: carId, required: true },
     { id: "driverId", label: "Driver", type: "select", options: driverOpts("Choose driver"), value: driverId, required: true },
     { id: "rate", label: "Daily rate (KSh)", type: "number", value: r.rate ?? prevRate, required: true, half: true },
     { id: "restDay", label: "Rest day", type: "select", options: [["", "No rest day"]].concat(DAYS.map((d, i) => [String(i), d])), value: r.restDay ?? "0", half: true },
@@ -1204,7 +1209,7 @@ function formAssign(pre, rec) {
     }
     const ref = rec ? S.db.collection("assignments").doc(rec.id) : S.db.collection("assignments").doc();
     return save(async () => { for (const op of ops) await op(); await ref.set({ ...v, restDay: v.restDay === "" ? "" : Number(v.restDay), updatedAt: new Date().toISOString() }); }, "Assignment saved");
-  }, { intro: rec ? "" : "If the car or driver already has an open assignment, it will end the day before this one starts.", onDelete: rec ? () => save(() => S.db.collection("assignments").doc(rec.id).delete(), "Assignment deleted") : null });
+  }, { intro: rec ? "" : ext.intro || "If the car or driver already has an open assignment, it will end the day before this one starts.", onDelete: rec ? () => save(() => S.db.collection("assignments").doc(rec.id).delete(), "Assignment deleted") : null });
 }
 
 function formSettings() {
@@ -1495,6 +1500,14 @@ document.addEventListener("click", async e => {
     case "imp-go": runImport(); break;
     case "sub-ok": approveSub(v); break;
     case "settle": startSettle(v); break;
+    case "assign-from-pays": {
+      const pd = all("payments").filter(p => p.driverId === v && Number(p.amount) > 0 && p.method !== "Deposit").map(p => p.date).sort();
+      if (!pd.length) break;
+      const first = pd[0], last = pd[pd.length - 1], wasLeft = isLeft(v);
+      formAssign(null, null, { title: "Add past assignment", prefill: { driverId: v, start: first, end: last, restDay: 0 },
+        intro: `Start and end are set to the first and last payment dates (${fmtDate(first)} and ${fmtDate(last)}). Choose the car and daily rate, and adjust the dates if the driver had the car longer.${wasLeft ? "" : " Clear the end date if the driver still has the car."}` });
+      break;
+    }
     case "sub-no": rejectSub(v); break;
     case "drv-pay": drvPay(); break;
     case "drv-km": drvKm(); break;
