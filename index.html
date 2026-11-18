@@ -316,6 +316,9 @@ function compute() {
   S.drivers.forEach(d => dInit(d.id));
   S.cars.forEach(c => cInit(c.id));
 
+  // Per-assignment day counts and each driver's charged days (for "days paid")
+  const aStats = {}, chargedDays = {};
+  const aInit = a => aStats[a.id] || (aStats[a.id] = { id: a.id, carId: a.carId, driverId: a.driverId, rate: Number(a.rate) || 0, start: a.start, end: a.end, days: 0, rest: 0, off: 0, absent: 0, worked: 0, charged: 0, due: 0, first: null, last: null });
   // Day loop per car
   for (const c of S.cars) {
     const st = c.inServiceDate && c.inServiceDate > TS ? c.inServiceDate : TS;
@@ -323,12 +326,16 @@ function compute() {
     const cst = cs[c.id], dm = down[c.id];
     for (let d = st; d <= en; d = addDays(d, 1)) {
       const a = assignOn(c.id, d);
-      if (a && a.restDay !== "" && a.restDay != null && Number(a.restDay) === weekday(d)) continue;
+      const ast = a ? aInit(a) : null;
+      if (ast) { ast.days++; if (!ast.first || d < ast.first) ast.first = d; if (!ast.last || d > ast.last) ast.last = d; }
+      if (a && a.restDay !== "" && a.restDay != null && Number(a.restDay) === weekday(d)) { ast.rest++; continue; }
       const dn = dm && dm.get(d);
       const p = inP(d);
       if (p) { cst.denomP++; if (dn) cst.downP++; else if (!a) cst.idleP++; }
       if (a) {
         const rate = Number(a.rate) || 0;
+        if (dn && dn.excused) ast.off++;
+        else { ast.charged++; ast.due += rate; if (dn) ast.absent++; else ast.worked++; (chargedDays[a.driverId] || (chargedDays[a.driverId] = [])).push({ d, rate }); }
         if (!(dn && dn.excused)) {
           const dst = dInit(a.driverId);
           dst.expAll += rate;
@@ -385,7 +392,15 @@ function compute() {
     if (balance < -1) { status = "good"; statusLabel = "In credit"; }
     else if (balance > 1) { if (daysBehind > Number(S.settings.arrearsDays || 2)) { status = "bad"; statusLabel = "In arrears"; } else { status = "warn"; statusLabel = "Slightly behind"; } }
     if (d.status === "left" && Math.abs(balance) <= 1) { status = "neutral"; statusLabel = "Settled"; }
-    return { ...d, ...s, balance, rate, daysBehind, assign: a, status, statusLabel, collRateP: s.expP + s.chgP ? s.payP / (s.expP + s.chgP) : NaN };
+    // Days: payments cover the opening balance and charges first, then daily rates oldest first
+    const asg = Object.values(aStats).filter(x => x.driverId === d.id).sort((x, y) => x.start.localeCompare(y.start));
+    const tot = asg.reduce((t, x) => { for (const k of ["days", "rest", "off", "absent", "worked", "charged", "due"]) t[k] += x[k]; return t; }, { days: 0, rest: 0, off: 0, absent: 0, worked: 0, charged: 0, due: 0 });
+    const cd = (chargedDays[d.id] || []).sort((x, y) => x.d.localeCompare(y.d));
+    let pool = s.payAll + adjTotal(d) - (Number(d.openingBalance) || 0) - s.chgAll, paidDays = 0, paidUpTo = null, partial = 0;
+    for (const x of cd) { if (pool >= x.rate - 0.5) { pool -= x.rate; paidDays++; paidUpTo = x.d; } else { partial = Math.max(0, pool); pool = 0; break; } }
+    const aheadDays = pool > 0.5 && refRate ? pool / refRate : 0;
+    const days = { asg, ...tot, paidDays, unpaidDays: tot.charged - paidDays, paidUpTo, partial, aheadDays, first: asg.length ? asg.map(x => x.first).filter(Boolean).sort()[0] || null : null, last: asg.length ? asg.map(x => x.last).filter(Boolean).sort().pop() || null : null };
+    return { ...d, ...s, balance, rate, daysBehind, assign: a, status, statusLabel, days, collRateP: s.expP + s.chgP ? s.payP / (s.expP + s.chgP) : NaN };
   });
 
   // Car rows
@@ -730,7 +745,7 @@ function driverList(ds) {
   if (!ds.length) return `<div class="card empty">No drivers yet.</div>`;
   return `<div class="list">${ds.map(d => `<div class="li" data-action="open" data-v="driver:${d.id}" style="cursor:pointer">
     <div class="main"><div class="t">${esc(d.name)} ${d.assign ? plate(carLabel(d.assign.carId)) : `<span class="small muted">Not driving</span>`}</div>
-    <div class="small muted">${d.assign ? ksh(d.rate) + "/day" : ""}${d.lastPay ? " · last paid " + fmtShort(d.lastPay) : " · no payments yet"}</div></div>
+    <div class="small muted">${d.assign ? ksh(d.rate) + "/day" : ""}${d.days.charged ? ` · ${d.days.paidDays} of ${d.days.charged} days paid` : ""}${d.lastPay ? " · last paid " + fmtShort(d.lastPay) : " · no payments yet"}</div></div>
     <div class="end"><b class="num" style="color:${d.balance > 1 ? "var(--bad)" : "var(--good)"}">${d.balance > 1 ? ksh(d.balance) + " owed" : d.balance < -1 ? ksh(-d.balance) + " credit" : "KSh 0"}</b>${pill(d.status, d.statusLabel)}</div>
   </div>`).join("")}</div>`;
 }
@@ -832,10 +847,33 @@ function driverDetail(c, id) {
     <div><span>Total paid</span><b>${ksh(d.payAll)}</b></div>
     <div><span>Total due</span><b>${ksh(d.expAll + d.chgAll + (Number(d.openingBalance) || 0))}</b></div>
   </div></div>
+  ${daysCard(d)}
   <h3>Payments</h3>${recordList("payments", pays)}
   <h3>Charges (fines, damage)</h3>${recordList("expenses", chg)}
   <h3>Cars driven</h3><div class="list">${hist.map(a => `<div class="li"><div class="main"><div class="t">${plate(carLabel(a.carId))}</div><div class="small muted">${fmtDate(a.start)} → ${a.end ? fmtDate(a.end) : "now"} · ${ksh(a.rate)}/day</div></div></div>`).join("") || `<div class="empty">Not assigned yet.</div>`}</div>
   </div>`;
+}
+
+
+function daysCard(d) {
+  const x = d.days;
+  if (!x.asg.length) return `<div class="card small"><h3>Days worked and paid</h3><p class="muted">No car assignment is recorded for this driver, so no days can be counted and every payment shows as credit. Use <b>Assign to car</b> to add each period they had a car, with its start and end dates.</p></div>`;
+  const cell = (l, v, sub, color) => `<div><span>${l}</span><b style="${color ? "color:" + color : ""}">${v}</b>${sub ? `<div class="small muted">${sub}</div>` : ""}</div>`;
+  const paidLine = x.unpaidDays > 0 ? `Paid up to ${x.paidUpTo ? fmtDate(x.paidUpTo) : "— (no full day paid yet)"}${x.partial ? ", plus " + ksh(x.partial) + " towards the next day" : ""}` : x.aheadDays >= 0.1 ? `All days paid, plus about ${x.aheadDays.toFixed(1)} days in advance` : "All days paid";
+  const rows = x.asg.map(a => `<tr><td>${plate(carLabel(a.carId))}</td><td class="small">${fmtShort(a.first || a.start)} → ${a.end && a.end <= todayStr() ? fmtShort(a.end) : "now"}</td><td class="r">${ksh(a.rate)}</td><td class="r">${a.days}</td><td class="r">${a.rest}</td><td class="r">${a.off}</td><td class="r">${a.worked}</td><td class="r">${a.charged}</td><td class="r">${ksh(a.due)}</td></tr>`).join("");
+  return `<div class="card"><div class="section-head" style="margin-bottom:8px"><h3>Days worked and paid</h3><span class="small muted">${fmtDate(x.first)} → ${d.assign ? "today" : fmtDate(x.last)}</span></div>
+  <div class="detail-grid">
+    ${cell("Days with a car", x.days)}
+    ${cell("Rest days", x.rest)}
+    ${cell("Off road, not charged", x.off)}
+    ${cell("Days worked", x.worked, x.absent ? `+ ${x.absent} absent (still charged)` : "")}
+    ${cell("Days to pay for", x.charged)}
+    ${cell("Days paid", x.paidDays, "", "var(--good)")}
+    ${cell("Days unpaid", Math.max(0, x.unpaidDays), "", x.unpaidDays > 0 ? "var(--bad)" : "")}
+  </div>
+  <div class="small" style="margin-top:10px"><b>${paidLine}</b></div>
+  <div class="small muted" style="margin-top:4px">Payments first cover any opening balance and charges (fines, damage), then the oldest unpaid day.${S.settings.trackStart && x.asg.some(a => a.start < trackStart()) ? " Days before " + fmtDate(trackStart()) + " are not counted; use the driver's opening balance for them." : ""}</div>
+  <div class="table-wrap" style="margin-top:10px"><table><thead><tr><th>Car</th><th>Period</th><th class="r">Rate</th><th class="r">With car</th><th class="r">Rest</th><th class="r">Off road</th><th class="r">Worked</th><th class="r">To pay</th><th class="r">Due</th></tr></thead><tbody>${rows}</tbody></table></div></div>`;
 }
 
 function viewMore() {
@@ -969,6 +1007,7 @@ function statementText(id) {
   lines.push(`${S.settings.name || "Fleet"}: statement for ${d.name}`);
   if (d.assign) lines.push(`Car ${carLabel(d.assign.carId)} · ${ksh(d.rate)} per day`);
   lines.push(`As at ${fmtDate(T)}`);
+  if (d.days.charged) { lines.push(`Days to pay for since ${fmtShort(d.days.first)}: ${d.days.charged} · paid: ${d.days.paidDays} · unpaid: ${Math.max(0, d.days.unpaidDays)}`); if (d.days.paidUpTo && d.days.unpaidDays > 0) lines.push(`Paid up to ${fmtDate(d.days.paidUpTo)}`); }
   lines.push("");
   lines.push(`Payments since ${fmtShort(from)}:`);
   if (!pays.length) lines.push("  none");
@@ -1240,7 +1279,7 @@ function buildSummary(d) {
   const pays = all("payments").filter(p => p.driverId === d.id).sort((a, b) => b.date.localeCompare(a.date)).slice(0, 20).map(p => ({ date: p.date, amount: Number(p.amount) || 0, ref: p.ref || "" }));
   const since = addDays(todayStr(), -60);
   const chg = all("expenses").filter(x => x.chargeDriver && x.driverId === d.id && x.date >= since).sort((a, b) => b.date.localeCompare(a.date)).slice(0, 10).map(x => ({ date: x.date, category: x.category || "", amount: Number(x.amount) || 0, note: x.note || "" }));
-  return { driverId: d.id, name: d.name || "", bizName: S.settings.name || "Fleet Ledger", plate: d.assign ? carLabel(d.assign.carId) : "", rate: d.rate || 0, restDay: d.assign ? d.assign.restDay : "", balance: Math.round(d.balance), daysBehind: Math.round((d.daysBehind || 0) * 10) / 10, asOf: todayStr(), payments: pays, charges: chg };
+  return { driverId: d.id, name: d.name || "", bizName: S.settings.name || "Fleet Ledger", plate: d.assign ? carLabel(d.assign.carId) : "", rate: d.rate || 0, restDay: d.assign ? d.assign.restDay : "", balance: Math.round(d.balance), daysBehind: Math.round((d.daysBehind || 0) * 10) / 10, asOf: todayStr(), payments: pays, charges: chg, days: { first: d.days.first || "", worked: d.days.worked, charged: d.days.charged, paid: d.days.paidDays, unpaid: Math.max(0, d.days.unpaidDays), paidUpTo: d.days.paidUpTo || "" } };
 }
 let summaryBusy = false;
 async function syncSummaries() {
@@ -1292,7 +1331,7 @@ function renderDriver() {
     top = `<div class="card"><div class="small muted">Hi ${esc(String(s.name).split(" ")[0])}</div><div class="kpi"><div class="value" style="font-size:26px">${head}</div></div>
       <div class="small muted" style="margin-top:4px">${bal > 1 && s.daysBehind ? "About " + s.daysBehind + " days of payments · " : ""}Updated ${upd}</div>
       ${waiting ? `<div class="small" style="margin-top:6px">${ksh(waiting)} you reported is waiting for the office to confirm.</div>` : ""}
-      <div class="detail-grid" style="margin-top:12px"><div><span>Car</span><b>${s.plate ? plate(s.plate) : "None"}</b></div><div><span>Daily rate</span><b>${s.rate ? ksh(s.rate) : "—"}</b></div><div><span>Rest day</span><b>${s.restDay === "" || s.restDay == null ? "None" : DAYS[s.restDay]}</b></div></div></div>`;
+      <div class="detail-grid" style="margin-top:12px"><div><span>Car</span><b>${s.plate ? plate(s.plate) : "None"}</b></div><div><span>Daily rate</span><b>${s.rate ? ksh(s.rate) : "—"}</b></div><div><span>Rest day</span><b>${s.restDay === "" || s.restDay == null ? "None" : DAYS[s.restDay]}</b></div>${s.days && s.days.charged ? `<div><span>Days worked</span><b>${s.days.worked}</b></div><div><span>Days paid</span><b>${s.days.paid} of ${s.days.charged}</b></div><div><span>Paid up to</span><b>${s.days.paidUpTo ? fmtDate(s.days.paidUpTo) : "—"}</b></div>` : ""}</div></div>`;
   }
   const big = (a, t, d) => `<button class="btn" data-action="${a}" style="justify-content:flex-start;flex-direction:column;align-items:flex-start;padding:14px;text-align:left"><span style="font-size:16px">${t}</span><span class="small muted" style="font-weight:400">${d}</span></button>`;
   v.innerHTML = `<div class="section">${top}</div>
