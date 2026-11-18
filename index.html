@@ -371,6 +371,12 @@ function compute() {
     fInit(monthOf(x.date)).cost += amt;
     if (x.carId) { const c = cInit(x.carId); c.costAll += amt; c.costM[monthOf(x.date)] = (c.costM[monthOf(x.date)] || 0) + amt; if (inP(x.date)) c.costP += amt; }
     if (x.chargeDriver && x.driverId) { const dst = dInit(x.driverId); dst.chgAll += amt; if (inP(x.date)) dst.chgP += amt; }
+    // Driver paid from their own money: still an owner cost, but it counts as a payment from the driver
+    if (x.paidByDriver && x.driverId) {
+      const dst = dInit(x.driverId); dst.payAll += amt; dst.creditAll = (dst.creditAll || 0) + amt; if (inP(x.date)) dst.payP += amt;
+      fInit(monthOf(x.date)).rev += amt;
+      if (x.carId) { const c = cInit(x.carId); c.revAll += amt; c.revM[monthOf(x.date)] = (c.revM[monthOf(x.date)] || 0) + amt; if (inP(x.date)) c.revP += amt; }
+    }
   }
   // Odometer
   const odoBy = {};
@@ -805,7 +811,7 @@ function recordList(kind, rows) {
   if (!rows.length) return `<div class="card empty">Nothing recorded yet.</div>`;
   const line = r => {
     if (kind === "payments") return [`${esc(driverName(r.driverId))} ${r.carId ? plate(carLabel(r.carId)) : ""}`, `${fmtDate(r.date)} · ${esc(r.method || "")}${r.ref ? " · " + esc(r.ref) : ""}`, ksh(r.amount)];
-    if (kind === "expenses") return [`${esc(r.category)} ${plate(carLabel(r.carId))}`, `${fmtDate(r.date)}${r.vendor ? " · " + esc(r.vendor) : ""}${r.chargeDriver ? " · charged to " + esc(driverName(r.driverId)) : ""}${r.note ? " · " + esc(r.note) : ""}`, ksh(r.amount)];
+    if (kind === "expenses") return [`${esc(r.category)} ${plate(carLabel(r.carId))}`, `${fmtDate(r.date)}${r.vendor ? " · " + esc(r.vendor) : ""}${r.chargeDriver ? " · charged to " + esc(driverName(r.driverId)) : ""}${r.paidByDriver ? " · paid by " + esc(driverName(r.driverId)) + " (credited)" : ""}${r.note ? " · " + esc(r.note) : ""}`, ksh(r.amount)];
     if (kind === "downtime") return [`${esc(r.reason)} ${plate(carLabel(r.carId))}`, `${fmtDate(r.from)} → ${r.to ? fmtDate(r.to) : "still off road"}${r.excused === false ? " · driver still owes" : " · driver not charged"}${r.note ? " · " + esc(r.note) : ""}`, `${dayDiff(r.from, r.to || todayStr()) + 1} day(s)`];
     return [`${plate(carLabel(r.carId))}`, fmtDate(r.date), `${Number(r.km).toLocaleString()} km`];
   };
@@ -885,6 +891,7 @@ function driverDetail(c, id) {
   ${daysCard(d)}
   <h3>Payments</h3>${recordList("payments", pays)}
   <h3>Charges (fines, damage)</h3>${recordList("expenses", chg)}
+  ${(() => { const cr = all("expenses").filter(x => x.paidByDriver && x.driverId === id).sort((a, b) => b.date.localeCompare(a.date)); return cr.length ? `<h3>Car costs the driver paid (credited)</h3>${recordList("expenses", cr)}` : ""; })()}
   <h3>Cars driven</h3><div class="list">${hist.map(a => `<div class="li"><div class="main"><div class="t">${plate(carLabel(a.carId))}</div><div class="small muted">${fmtDate(a.start)} → ${a.end ? fmtDate(a.end) : "now"} · ${ksh(a.rate)}/day</div></div></div>`).join("") || `<div class="empty">Not assigned yet.</div>`}</div>
   </div>`;
 }
@@ -1051,6 +1058,8 @@ function statementText(id) {
   lines.push(`Payments since ${fmtShort(from)}:`);
   if (!pays.length) lines.push("  none");
   pays.forEach(p => lines.push(`  ${fmtShort(p.date)}  ${ksh(p.amount)}${p.ref ? "  (" + p.ref + ")" : ""}`));
+  const cr = all("expenses").filter(x => x.paidByDriver && x.driverId === id && x.date >= from);
+  if (cr.length) { lines.push(""); lines.push("Car costs you paid (deducted):"); cr.forEach(x => lines.push(`  ${fmtShort(x.date)}  ${x.category}  ${ksh(x.amount)}${x.note ? " · " + x.note : ""}`)); }
   if (chg.length) { lines.push(""); lines.push("Charges:"); chg.forEach(x => lines.push(`  ${fmtShort(x.date)}  ${x.category}  ${ksh(x.amount)}${x.note ? " · " + x.note : ""}`)); }
   lines.push("");
   lines.push(d.balance > 1 ? `Balance owed: ${ksh(d.balance)} (about ${d.daysBehind.toFixed(1)} days)` : d.balance < -1 ? `You are ${ksh(-d.balance)} in credit. Thank you.` : "You are fully paid up. Thank you.");
@@ -1126,12 +1135,14 @@ function formExpense(carId, rec) {
     { id: "date", label: "Date", type: "date", value: rec ? rec.date : todayStr(), half: true, min: trackStart() },
     { id: "odometer", label: "Odometer (km)", type: "number", value: rec ? rec.odometer : "", half: true, hint: "Needed for service reminders" },
     { id: "vendor", label: "Garage / supplier", value: rec ? rec.vendor : "" },
-    { id: "chargeDriver", label: "Charge this to the driver", type: "check", value: rec ? rec.chargeDriver : false, hint: "For fines or damage the driver caused. It's added to what they owe." },
+    { id: "chargeDriver", label: "Charge this to the driver", type: "check", value: rec ? rec.chargeDriver : false, hint: "You paid for fines or damage the driver caused. It's added to what they owe." },
+    { id: "paidByDriver", label: "Driver paid this from their own money", type: "check", value: rec ? rec.paidByDriver : false, hint: "The driver paid for a car cost you normally cover (e.g. a repair or tyre). It's deducted from what they owe." },
     { id: "note", label: "Note", type: "textarea", value: rec ? rec.note : "" }
   ], async v => {
     if (!v.carId) return "Choose the car"; if (!(v.amount > 0)) return "Enter the amount";
     if (v.date < trackStart()) return "Date is before your tracking start date";
-    if (v.chargeDriver) { const a = assignOn(v.carId, v.date); if (!a) return "No driver had this car on that date, so it can't be charged"; v.driverId = a.driverId; } else v.driverId = "";
+    if (v.chargeDriver && v.paidByDriver) return "Tick only one: either the driver owes this, or the driver already paid it";
+    if (v.chargeDriver || v.paidByDriver) { const a = assignOn(v.carId, v.date) || S.assigns.filter(x => x.carId === v.carId && x.start <= v.date).sort((x, y) => y.start.localeCompare(x.start))[0]; if (!a) return "No driver had this car on that date"; v.driverId = a.driverId; } else v.driverId = "";
     if (v.odometer === "") delete v.odometer;
     return save(() => writeRecord("expenses", v, rec), "Expense saved");
   }, { onDelete: rec ? () => save(() => deleteRecord("expenses", rec), "Expense deleted") : null });
@@ -1319,7 +1330,7 @@ function buildSummary(d) {
   const pays = all("payments").filter(p => p.driverId === d.id).sort((a, b) => b.date.localeCompare(a.date)).slice(0, 20).map(p => ({ date: p.date, amount: Number(p.amount) || 0, ref: p.ref || "" }));
   const since = addDays(todayStr(), -60);
   const chg = all("expenses").filter(x => x.chargeDriver && x.driverId === d.id && x.date >= since).sort((a, b) => b.date.localeCompare(a.date)).slice(0, 10).map(x => ({ date: x.date, category: x.category || "", amount: Number(x.amount) || 0, note: x.note || "" }));
-  return { driverId: d.id, name: d.name || "", bizName: S.settings.name || "Fleet Ledger", plate: d.assign ? carLabel(d.assign.carId) : "", rate: d.rate || 0, restDay: d.assign ? d.assign.restDay : "", balance: Math.round(d.balance), daysBehind: Math.round((d.daysBehind || 0) * 10) / 10, asOf: todayStr(), payments: pays, charges: chg, days: { first: d.days.first || "", worked: d.days.worked, charged: d.days.charged, paid: d.days.paidDays, unpaid: Math.max(0, d.days.unpaidDays), paidUpTo: d.days.paidUpTo || "" } };
+  return { driverId: d.id, name: d.name || "", bizName: S.settings.name || "Fleet Ledger", plate: d.assign ? carLabel(d.assign.carId) : "", rate: d.rate || 0, restDay: d.assign ? d.assign.restDay : "", balance: Math.round(d.balance), daysBehind: Math.round((d.daysBehind || 0) * 10) / 10, asOf: todayStr(), payments: pays, charges: chg, credits: all("expenses").filter(x => x.paidByDriver && x.driverId === d.id && x.date >= since).sort((a, b) => b.date.localeCompare(a.date)).slice(0, 10).map(x => ({ date: x.date, category: x.category || "", amount: Number(x.amount) || 0, note: x.note || "" })), days: { first: d.days.first || "", worked: d.days.worked, charged: d.days.charged, paid: d.days.paidDays, unpaid: Math.max(0, d.days.unpaidDays), paidUpTo: d.days.paidUpTo || "" } };
 }
 let summaryBusy = false;
 async function syncSummaries() {
@@ -1380,6 +1391,7 @@ function renderDriver() {
   </div></div>
   <div class="section"><h2>My updates</h2>${subs.length ? `<div class="list">${subs.slice(0, 15).map(subLine).join("")}</div>` : `<div class="card empty">Nothing sent yet.</div>`}</div>
   ${s ? `<div class="section"><h2>Payments received</h2>${s.payments && s.payments.length ? `<div class="list">${s.payments.map(p => `<div class="li"><div class="main"><div class="t">${ksh(p.amount)}</div><div class="small muted">${fmtDate(p.date)}${p.ref ? " · " + esc(p.ref) : ""}</div></div></div>`).join("")}</div>` : `<div class="card empty">No payments recorded yet.</div>`}</div>
+  ${s.credits && s.credits.length ? `<div class="section"><h2>Car costs you paid (deducted)</h2><div class="list">${s.credits.map(x => `<div class="li"><div class="main"><div class="t">${esc(x.category)}</div><div class="small muted">${fmtDate(x.date)}${x.note ? " · " + esc(x.note) : ""}</div></div><div class="end"><b class="num" style="color:var(--good)">${ksh(x.amount)}</b></div></div>`).join("")}</div></div>` : ""}
   ${s.charges && s.charges.length ? `<div class="section"><h2>Charges</h2><div class="list">${s.charges.map(x => `<div class="li"><div class="main"><div class="t">${esc(x.category)}</div><div class="small muted">${fmtDate(x.date)}${x.note ? " · " + esc(x.note) : ""}</div></div><div class="end"><b class="num">${ksh(x.amount)}</b></div></div>`).join("")}</div></div>` : ""}` : ""}
   <div class="small muted">Something looks wrong? Talk to the office. Paid in cash? Tell the office directly.</div>`;
 }
