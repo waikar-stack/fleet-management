@@ -218,7 +218,9 @@ const DOWN_REASONS = [
   { v: "Driver absent", excused: false },
   { v: "Other", excused: true }
 ];
-const METHODS = ["M-Pesa Till", "M-Pesa Paybill", "M-Pesa (personal)", "Cash", "Bank"];
+const METHODS = ["M-Pesa Till", "M-Pesa Paybill", "M-Pesa (personal)", "Cash", "Bank", "Deposit", "Refund"];
+const adjTotal = d => (Array.isArray(d.adjustments) ? d.adjustments : []).reduce((t, a) => t + (Number(a.amount) || 0), 0);
+const isLeft = id => { const r = driverById(id); return !!(r && r.status === "left"); };
 const DEFAULT_SETTINGS = { name: "Fleet Ledger", trackStart: "", warnDays: 30, arrearsDays: 2, serviceWarnKm: 500, serviceIntervalKm: 5000 };
 
 /* ============ Date & format helpers ============ */
@@ -252,8 +254,16 @@ const S = {
   cars: [], drivers: [], assigns: [], settings: { ...DEFAULT_SETTINGS },
   months: {},          // "YYYY-MM" -> {payments:[], expenses:[], downtime:[], odo:[]}
   loadedMonths: new Set(), subs: [], coreReady: { cars: false, drivers: false, assigns: false, settings: false },
-  period: "month", view: "home", detail: null, calc: null
+  period: "month", view: "home", detail: null, calc: null,
+  mode: "family", confirmed: new Set(), pending: [], summaries: {}, me: null, dsum: null, mySubs: []
 };
+const META = { includeMetadataChanges: true };
+function confirmKey(key, snap) { if (!snap.metadata.fromCache) S.confirmed.add(key); }
+function allConfirmed() {
+  if (!["cars", "drivers", "assignments", "settings", "driverSummaries"].every(k => S.confirmed.has(k))) return false;
+  for (const m of S.loadedMonths) for (const k of KINDS) if (!S.confirmed.has(`months/${m}/${k}`)) return false;
+  return true;
+}
 const KINDS = ["payments", "expenses", "downtime", "odo"];
 const all = kind => Object.values(S.months).flatMap(m => m[kind] || []);
 const carById = id => S.cars.find(c => c.id === id);
@@ -366,12 +376,15 @@ function compute() {
   // Driver balances
   const drivers = S.drivers.map(d => {
     const s = ds[d.id], a = currentAssignForDriver(d.id);
-    const balance = (Number(d.openingBalance) || 0) + s.expAll + s.chgAll - s.payAll;
+    const balance = (Number(d.openingBalance) || 0) + s.expAll + s.chgAll - s.payAll - adjTotal(d);
     const rate = a ? Number(a.rate) || 0 : 0;
-    const daysBehind = rate ? balance / rate : 0;
+    const lastA = a || S.assigns.filter(x => x.driverId === d.id).sort((x, y) => y.start.localeCompare(x.start))[0];
+    const refRate = lastA ? Number(lastA.rate) || 0 : 0;
+    const daysBehind = refRate ? balance / refRate : 0;
     let status = "good", statusLabel = "Up to date";
     if (balance < -1) { status = "good"; statusLabel = "In credit"; }
     else if (balance > 1) { if (daysBehind > Number(S.settings.arrearsDays || 2)) { status = "bad"; statusLabel = "In arrears"; } else { status = "warn"; statusLabel = "Slightly behind"; } }
+    if (d.status === "left" && Math.abs(balance) <= 1) { status = "neutral"; statusLabel = "Settled"; }
     return { ...d, ...s, balance, rate, daysBehind, assign: a, status, statusLabel, collRateP: s.expP + s.chgP ? s.payP / (s.expP + s.chgP) : NaN };
   });
 
@@ -441,10 +454,12 @@ function compute() {
     if (!c.assign && !c.downToday) alerts.push({ sev: "warn", what: "Car has no driver", why: `${c.plate} is earning nothing`, link: "car:" + c.id, sort: 5 });
   }
   for (const d of drivers) {
+    if (!d.assign && !isLeft(d.id) && Math.abs(d.balance) > 1 && S.assigns.some(a => a.driverId === d.id)) alerts.push({ sev: "warn", what: `${d.name} isn't driving: settle the balance`, why: d.balance > 0 ? `Still owes ${ksh(d.balance)}` : `Shows ${ksh(-d.balance)} in credit`, link: "driver:" + d.id, sort: 20 });
     if (d.status === "bad") alerts.push({ sev: "bad", what: `${d.name} owes ${ksh(d.balance)}`, why: `About ${d.daysBehind.toFixed(1)} days of payments behind`, link: "driver:" + d.id, sort: -d.daysBehind });
     docCheck(d.licenseExpiry, "Driving licence", d.name, "driver:" + d.id);
     docCheck(d.psvBadgeExpiry, "PSV badge", d.name, "driver:" + d.id);
   }
+  if (S.pending.length) alerts.push({ sev: "warn", what: `${S.pending.length} driver update${S.pending.length === 1 ? "" : "s"} to review`, why: "Payments, mileage or problems reported by drivers", link: "go:collect", sort: -1000 });
   alerts.sort((a, b) => (a.sev === b.sev ? 0 : a.sev === "bad" ? -1 : 1) || a.sort - b.sort);
 
   // Trend: last 6 months
@@ -469,11 +484,14 @@ async function boot() {
   const fs = firebase.firestore();
   try { fs.settings({ ignoreUndefinedProperties: true, merge: true }); } catch (e) {}
   try { await fs.enablePersistence({ synchronizeTabs: true }); } catch (e) {} // works offline on patchy networks
-  firebase.auth().onAuthStateChanged(u => {
+  firebase.auth().onAuthStateChanged(async u => {
     if (!u) { setSync("Signed out"); document.getElementById("signout").style.display = "none"; document.getElementById("fab").style.display = "none"; viewLogin(); return; }
     document.getElementById("signout").style.display = "";
     S.user = u;
-    startData(fs);
+    setSync("Checking access…");
+    let link = null;
+    try { const snap = await fs.collection("driverLogins").doc(String(u.email || "").toLowerCase()).get(); if (snap.exists) link = snap.data(); } catch (e) {}
+    if (link && link.driverId) startDriver(fs, link.driverId); else startData(fs);
   });
 }
 
@@ -508,8 +526,9 @@ function startData(db) {
     } else setSync("Data unavailable: " + (e && e.code || "error"));
   };
   const synced = snap => setSync(snap.metadata.fromCache ? "Saved copy (offline)" : "Up to date");
-  const core = (name, coll, key) => S.subs.push(db.collection(coll).onSnapshot(snap => {
+  const core = (name, coll, key) => S.subs.push(db.collection(coll).onSnapshot(META, snap => {
     clearTimeout(timer);
+    confirmKey(coll, snap);
     S[key] = snapRows(snap);
     S.coreReady[name] = true;
     synced(snap);
@@ -518,12 +537,15 @@ function startData(db) {
   core("cars", "cars", "cars");
   core("drivers", "drivers", "drivers");
   core("assigns", "assignments", "assigns");
-  S.subs.push(db.doc("settings/main").onSnapshot(snap => {
+  S.subs.push(db.doc("settings/main").onSnapshot(META, snap => {
+    confirmKey("settings", snap);
     S.settings = { ...DEFAULT_SETTINGS, ...(snap.exists ? snap.data() : {}) };
     S.coreReady.settings = true;
     document.getElementById("biz-name").textContent = S.settings.name || "Fleet Ledger";
     afterCore();
   }, onErr));
+  S.subs.push(db.collection("submissions").where("status", "==", "pending").onSnapshot(snap => { S.pending = snapRows(snap); render(); }, () => {}));
+  S.subs.push(db.collection("driverSummaries").onSnapshot(META, snap => { confirmKey("driverSummaries", snap); S.summaries = {}; snap.docs.forEach(d => { S.summaries[d.id] = d.data(); }); render(); }, () => {}));
 }
 
 function afterCore() {
@@ -537,8 +559,9 @@ function afterCore() {
     monthBucket(m);
     for (const k of KINDS) {
       const col = S.db.collection(`months/${m}/${k}`);
-      if (live.has(m)) S.subs.push(col.onSnapshot(snap => { monthBucket(m)[k] = snapRows(snap); render(); }, e => setSync("Data unavailable: " + e.code)));
-      else col.get().then(snap => { monthBucket(m)[k] = snapRows(snap); render(); }).catch(() => {});
+      const key = `months/${m}/${k}`;
+      if (live.has(m)) S.subs.push(col.onSnapshot(META, snap => { confirmKey(key, snap); monthBucket(m)[k] = snapRows(snap); render(); }, e => setSync("Data unavailable: " + e.code)));
+      else col.get().then(snap => { confirmKey(key, snap); monthBucket(m)[k] = snapRows(snap); render(); }).catch(() => {});
     }
   }
   render();
@@ -586,6 +609,7 @@ async function deleteRecord(kind, rec) {
 
 /* ============ Rendering ============ */
 function render() {
+  if (S.mode === "driver") { renderDriver(); return; }
   if (!S.db || !Object.values(S.coreReady).every(Boolean)) return;
   S.calc = compute();
   const v = document.getElementById("view");
@@ -598,6 +622,7 @@ function render() {
   document.getElementById("banner").innerHTML = S.canWrite ? "" : `<div class="banner">You can view this ledger but not change it. Ask the owner to share it with you as an Editor.</div>`;
   document.getElementById("fab").style.display = S.canWrite && S.cars.length ? "" : "none";
   bindChart();
+  syncSummaries();
 }
 
 const plate = p => `<span class="plate">${esc(p)}</span>`;
@@ -714,7 +739,7 @@ function viewCollect(c) {
   if (!S.assigns.length) return onboarding();
   const rows = [...c.todayRows].sort((a, b) => (b.due - b.paid) - (a.due - a.paid));
   const recent = all("payments").sort((a, b) => (b.date + (b.updatedAt || "")).localeCompare(a.date + (a.updatedAt || ""))).slice(0, 15);
-  return `
+  return `${reviewSection()}
   <div class="section"><div class="section-head"><h2>Today's payments</h2><span class="small muted">${fmtDate(c.T)}</span></div>
   <div class="list">${rows.map(r => {
     const dbal = c.drivers.find(d => d.id === r.a.driverId);
@@ -781,8 +806,9 @@ function carDetail(c, id) {
 function viewDrivers(c) {
   if (S.detail && S.detail.startsWith("driver:")) return driverDetail(c, S.detail.slice(7));
   const ds = [...c.drivers].sort((a, b) => b.balance - a.balance);
+  const former = ds.filter(d => isLeft(d.id) && Math.abs(d.balance) <= 1), current = ds.filter(d => !former.includes(d));
   return `<div class="section"><div class="section-head"><h2>Drivers</h2>${S.canWrite ? `<div class="row-actions"><button class="btn sm" data-action="new-assign">Assign to car</button><button class="btn primary sm" data-action="new-driver">Add driver</button></div>` : ""}</div>
-  ${driverList(ds)}<div class="small muted">Balance = opening balance + daily rates due + charges (fines, damage) − payments received. Rest days and off-road days that weren't the driver's fault are not charged.</div></div>`;
+  ${driverList(current)}${former.length ? `<details><summary class="small" style="cursor:pointer;padding:6px 0">Former drivers, settled (${former.length})</summary>${driverList(former)}</details>` : ""}<div class="small muted">Balance = opening balance + daily rates due + charges (fines, damage) − payments received. Rest days and off-road days that weren't the driver's fault are not charged.</div></div>`;
 }
 
 function driverDetail(c, id) {
@@ -792,7 +818,8 @@ function driverDetail(c, id) {
   const hist = S.assigns.filter(a => a.driverId === id).sort((a, b) => b.start.localeCompare(a.start));
   return `<div class="section"><div class="row-actions"><button class="btn sm" data-action="back">← All drivers</button></div>
   <div class="section-head"><h2>${esc(d.name)}</h2>${pill(d.status, d.statusLabel)}</div>
-  <div class="row-actions">${S.canWrite ? `<button class="btn primary sm" data-action="new-payment" data-v="${id}">Record payment</button><button class="btn sm" data-action="edit-driver" data-v="${id}">Edit driver</button><button class="btn sm" data-action="new-assign" data-v="driver:${id}">${d.assign ? "Change car" : "Assign to car"}</button>` : ""}<button class="btn sm" data-action="statement" data-v="${id}">Share statement</button></div>
+  <div class="row-actions">${S.canWrite ? `<button class="btn primary sm" data-action="new-payment" data-v="${id}">Record payment</button><button class="btn sm" data-action="edit-driver" data-v="${id}">Edit driver</button><button class="btn sm" data-action="new-assign" data-v="driver:${id}">${d.assign ? "Change car" : "Assign to car"}</button>${!isLeft(id) || Math.abs(d.balance) > 1 ? `<button class="btn sm" data-action="settle" data-v="${id}">Settle and close</button>` : ""}` : ""}<button class="btn sm" data-action="statement" data-v="${id}">Share statement</button></div>
+  ${isLeft(id) ? `<div class="banner" style="background:var(--accent-soft)">Left the fleet${d.leftDate ? " on " + fmtDate(d.leftDate) : ""}.${d.settlement ? " Settled " + fmtDate(d.settlement.date) + ": " + esc(d.settlement.summary) : ""}</div>` : ""}
   <div class="card"><div class="detail-grid">
     <div><span>Balance</span><b style="color:${d.balance > 1 ? "var(--bad)" : "var(--good)"}">${d.balance > 1 ? ksh(d.balance) + " owed" : d.balance < -1 ? ksh(-d.balance) + " credit" : "KSh 0"}</b></div>
     <div><span>Days behind</span><b>${d.balance > 1 && d.rate ? d.daysBehind.toFixed(1) : "0"}</b></div>
@@ -801,7 +828,7 @@ function driverDetail(c, id) {
     <div><span>Phone</span><b>${esc(d.phone || "—")}</b></div>
     <div><span>Driving licence</span><b>${fmtDate(d.licenseExpiry)}</b></div>
     <div><span>PSV badge</span><b>${fmtDate(d.psvBadgeExpiry)}</b></div>
-    <div><span>Deposit held</span><b>${d.deposit ? ksh(d.deposit) : "—"}</b></div>
+    <div><span>Deposit held</span><b>${d.deposit ? ksh(d.deposit) : "—"}</b></div>${adjTotal(d) ? `<div><span>Written off</span><b>${ksh(adjTotal(d))}</b></div>` : ""}
     <div><span>Total paid</span><b>${ksh(d.payAll)}</b></div>
     <div><span>Total due</span><b>${ksh(d.expAll + d.chgAll + (Number(d.openingBalance) || 0))}</b></div>
   </div></div>
@@ -832,7 +859,7 @@ function viewSettings() {
     <div><span>Default service interval</span><b>${Number(st.serviceIntervalKm).toLocaleString()} km</b></div>
     <div><span>Warn before service</span><b>${Number(st.serviceWarnKm).toLocaleString()} km</b></div>
   </div>${S.canWrite ? `<div style="margin-top:12px"><button class="btn primary sm" data-action="edit-settings">Edit settings</button></div>` : ""}</div>
-  <div class="card small"><h3>Sharing with family</h3><p class="muted">Create a login for each family member in Firebase (Authentication &gt; Users &gt; Add user), then add their email to the list in firestore.rules and publish the rules. Only emails on that list can see or change the figures. Drivers don't get access: send them their statement from the Collect or Drivers page instead.</p></div></div>`;
+  <div class="card small"><h3>Sharing with family</h3><p class="muted">Create a login for each family member in Firebase (Authentication &gt; Users &gt; Add user), then add their email to the list in firestore.rules and publish the rules. Only emails on that list can see or change the figures. </p><h3 style="margin-top:10px">Driver app</h3><p class="muted">Create a login for the driver in Firebase (Authentication &gt; Users &gt; Add user), then open the driver here, tap Edit driver and enter that email under "Driver app login email". The driver signs in at the same link and sees only their own balance, payments and charges. Anything they send (payments, mileage, problems) waits under Collect &gt; To review until a family member approves it.</p></div></div>`;
 }
 
 /* ============ M-Pesa import ============ */
@@ -981,7 +1008,7 @@ let FORM = null;
 function openForm(title, fields, onSubmit, opts = {}) {
   FORM = { fields, onSubmit, onDelete: opts.onDelete };
   const rows = []; for (let i = 0; i < fields.length; i++) { const f = fields[i]; if (f.half && fields[i + 1] && fields[i + 1].half) { rows.push(`<div class="two">${fieldHtml(f)}${fieldHtml(fields[i + 1])}</div>`); i++; } else rows.push(fieldHtml(f)); }
-  openSheet(title, `<form class="f" id="the-form" novalidate>${opts.intro ? `<p class="small muted" style="margin:0">${opts.intro}</p>` : ""}${rows.join("")}<div class="err" id="form-err"></div>
+  openSheet(title, `<form class="f" id="the-form" novalidate>${opts.intro ? `<div class="small muted" style="margin:0">${opts.intro}</div>` : ""}${rows.join("")}<div class="err" id="form-err"></div>
   <div class="row-actions"><button class="btn primary" type="submit">Save</button>${opts.onDelete ? `<button class="btn danger" type="button" data-action="form-delete">Delete</button>` : ""}</div></form>`);
   const onChange = opts.onChange; if (onChange) { document.getElementById("the-form").addEventListener("change", e => onChange(e, formVals())); }
 }
@@ -1002,7 +1029,7 @@ function formPayment(driverId, rec) {
     { id: "note", label: "Note", value: rec ? rec.note : "" }
   ], async v => {
     if (!v.driverId) return "Choose the driver who paid";
-    if (!(v.amount > 0)) return "Enter the amount paid";
+    if (!(v.amount > 0) && !(v.method === "Refund" && v.amount < 0)) return v.method === "Refund" ? "Enter a refund as a negative amount, e.g. -5000" : "Enter the amount paid";
     if (!v.date) return "Enter the date";
     if (v.date < trackStart()) return "Date is before your tracking start date (" + fmtDate(trackStart()) + ")";
     const id = recordId(v.ref);
@@ -1032,18 +1059,19 @@ function formExpense(carId, rec) {
   }, { onDelete: rec ? () => save(() => deleteRecord("expenses", rec), "Expense deleted") : null });
 }
 
-function formDowntime(carId, rec) {
+function formDowntime(carId, rec, ext = {}) {
+  const pf = ext.prefill || {};
   openForm(rec ? "Edit off-road days" : "Log off-road days", [
     { id: "carId", label: "Car", type: "select", options: carOpts("Choose car"), value: rec ? rec.carId : carId || "", required: true },
-    { id: "reason", label: "Reason", type: "select", options: DOWN_REASONS.map(r => r.v), value: rec ? rec.reason : "Service / repair" },
-    { id: "from", label: "From", type: "date", value: rec ? rec.from : todayStr(), half: true, min: trackStart() },
+    { id: "reason", label: "Reason", type: "select", options: DOWN_REASONS.map(r => r.v), value: rec ? rec.reason : pf.reason || "Service / repair" },
+    { id: "from", label: "From", type: "date", value: rec ? rec.from : pf.from || todayStr(), half: true, min: trackStart() },
     { id: "to", label: "Back on the road", type: "date", value: rec ? rec.to : "", half: true, hint: "Leave empty if still off road" },
-    { id: "excused", label: "Driver doesn't pay for these days", type: "check", value: rec ? rec.excused !== false : true, hint: "Untick if the driver was absent by choice and still owes the daily rate." },
-    { id: "note", label: "Note", value: rec ? rec.note : "" }
+    { id: "excused", label: "Driver doesn't pay for these days", type: "check", value: rec ? rec.excused !== false : pf.excused !== false, hint: "Untick if the driver was absent by choice and still owes the daily rate." },
+    { id: "note", label: "Note", value: rec ? rec.note : pf.note || "" }
   ], async v => {
     if (!v.carId) return "Choose the car"; if (!v.from) return "Enter the start date";
     if (v.to && v.to < v.from) return "Back-on-road date is before the start date";
-    return save(() => writeRecord("downtime", v, rec), "Saved");
+    return save(async () => { await writeRecord("downtime", v, rec); if (ext.after) await ext.after(); }, ext.after ? "Approved and saved" : "Saved");
   }, { onDelete: rec ? () => save(() => deleteRecord("downtime", rec), "Deleted") : null, onChange: (e, v) => { if (e.target.id === "f-reason") { const r = DOWN_REASONS.find(x => x.v === v.reason); document.getElementById("f-excused").checked = r ? r.excused : true; } } });
 }
 
@@ -1090,6 +1118,7 @@ function formDriver(rec) {
     { id: "name", label: "Full name", value: r.name, required: true, hint: "Use the name as it appears on M-Pesa so payments match" },
     { id: "phone", label: "M-Pesa phone number", type: "tel", value: r.phone, placeholder: "0712 345 678", half: true },
     { id: "startDate", label: "Joined on", type: "date", value: r.startDate, half: true },
+    { id: "loginEmail", label: "Driver app login email (optional)", type: "email", value: r.loginEmail, hint: "First create this login in Firebase > Authentication > Users. The driver will see only their own balance and can send updates for you to approve." },
     { id: "licenseExpiry", label: "Driving licence expires", type: "date", value: r.licenseExpiry, half: true },
     { id: "psvBadgeExpiry", label: "PSV badge expires", type: "date", value: r.psvBadgeExpiry, half: true },
     { id: "deposit", label: "Deposit held (KSh)", type: "number", value: r.deposit, half: true },
@@ -1098,8 +1127,16 @@ function formDriver(rec) {
     { id: "notes", label: "Notes", type: "textarea", value: r.notes }
   ], async v => {
     if (!v.name) return "Enter the driver's name";
+    v.loginEmail = (v.loginEmail || "").toLowerCase();
+    if (v.loginEmail && !/^[^\s@\/]+@[^\s@\/]+\.[^\s@\/]+$/.test(v.loginEmail)) return "Check the login email";
+    if (v.loginEmail && S.drivers.some(d => d.id !== r.id && String(d.loginEmail || "").toLowerCase() === v.loginEmail)) return "Another driver already uses this login email";
     const ref = rec ? S.db.collection("drivers").doc(rec.id) : S.db.collection("drivers").doc();
-    return save(() => ref.set({ ...v, updatedAt: new Date().toISOString() }), rec ? "Driver updated" : "Driver added");
+    const oldEmail = String(r.loginEmail || "").toLowerCase();
+    return save(async () => {
+      await ref.set({ ...v, updatedAt: new Date().toISOString() });
+      if (oldEmail && oldEmail !== v.loginEmail) await S.db.collection("driverLogins").doc(oldEmail).delete();
+      if (v.loginEmail) await S.db.collection("driverLogins").doc(v.loginEmail).set({ driverId: ref.id, name: v.name });
+    }, rec ? "Driver updated" : "Driver added");
   }, { onDelete: rec ? () => { if (S.assigns.some(a => a.driverId === rec.id) || all("payments").some(p => p.driverId === rec.id)) { toast("This driver has history. Set status to Left instead."); return false; } return save(() => S.db.collection("drivers").doc(rec.id).delete(), "Driver deleted"); } : null });
 }
 
@@ -1152,6 +1189,235 @@ function quickAdd() {
   </div>`);
 }
 
+
+/* ============ Driver updates: review (family side) ============ */
+const ISSUES = ["Breakdown / mechanical", "Accident", "Police / fine", "Platform account problem", "Other"];
+function reviewSection() {
+  const p = S.pending.slice().sort((a, b) => String(a.createdAt || "").localeCompare(String(b.createdAt || "")));
+  if (!p.length) return "";
+  const known = new Set(all("payments").map(x => x.id));
+  return `<div class="section"><div class="section-head"><h2>To review</h2><span class="small muted">${p.length} from drivers</span></div><div class="list">${p.map(s => {
+    const who = esc(driverName(s.driverId));
+    const a = driverAssignOn(s.driverId, s.date || todayStr()) || currentAssignForDriver(s.driverId);
+    const car = a ? plate(carLabel(a.carId)) : "";
+    let t, d, extra = "";
+    if (s.type === "payment") { const rid = recordId(s.ref); t = `${who} says they paid ${ksh(s.amount)}`; d = `${fmtDate(s.date)}${s.ref ? " · " + esc(s.ref) : ""}`; if (rid && known.has(rid)) extra = `<div>${pill("neutral", "Already recorded")}</div>`; }
+    else if (s.type === "mileage") { t = `${who}: mileage ${Number(s.km).toLocaleString()} km`; d = fmtDate(s.date); }
+    else { t = `${who} reports: ${esc(s.issue)}`; d = `${fmtDate(s.date)}${s.offRoad ? " · car can't work" : ""}`; }
+    const okLabel = s.type === "issue" && !s.offRoad ? "Mark handled" : "Approve";
+    return `<div class="li"><div class="main"><div class="t">${t} ${car}</div><div class="small muted">${d}${s.note ? " · “" + esc(s.note) + "”" : ""}</div>${extra}</div><div class="end">${S.canWrite ? `<button class="btn primary sm" data-action="sub-ok" data-v="${esc(s.id)}">${okLabel}</button><button class="btn sm" data-action="sub-no" data-v="${esc(s.id)}">Reject</button>` : ""}</div></div>`;
+  }).join("")}</div><div class="small muted">Approving adds the payment, mileage or off-road days to the records. The driver sees the result in their app.</div></div>`;
+}
+function markSub(s, status, note) {
+  return S.db.collection("submissions").doc(s.id).update({ status, reviewedAt: new Date().toISOString(), reviewedBy: (S.user && S.user.email) || "", reviewNote: note || "" });
+}
+async function approveSub(id) {
+  const s = S.pending.find(x => x.id === id); if (!s) return;
+  const a = driverAssignOn(s.driverId, s.date || todayStr()) || currentAssignForDriver(s.driverId);
+  if (s.type === "payment") {
+    const rid = recordId(s.ref);
+    if (rid && all("payments").some(p => p.id === rid)) { toast("This M-Pesa code is already recorded. Reject this update instead."); return; }
+    if (!s.date || s.date < trackStart()) { toast("The date is before your tracking start date"); return; }
+    const data = { date: s.date, driverId: s.driverId, carId: a ? a.carId : "", amount: Number(s.amount) || 0, method: "M-Pesa Till", ref: s.ref || "", note: "Reported by driver" + (s.note ? " · " + s.note : "") };
+    await save(async () => { await writeRecord("payments", data); await markSub(s, "approved"); }, "Payment approved");
+  } else if (s.type === "mileage") {
+    if (!a) { toast("This driver has no car assigned"); return; }
+    await save(async () => { await writeRecord("odo", { carId: a.carId, km: Number(s.km) || 0, date: s.date }); await markSub(s, "approved"); }, "Mileage approved");
+  } else if (s.offRoad) {
+    const reason = /accident/i.test(s.issue) ? "Accident" : /breakdown|mechanical/i.test(s.issue) ? "Service / repair" : /platform/i.test(s.issue) ? "Platform suspension" : "Other";
+    const r = DOWN_REASONS.find(x => x.v === reason);
+    formDowntime(a ? a.carId : "", null, { prefill: { reason, from: s.date, excused: r ? r.excused : true, note: String(s.issue + (s.note ? ": " + s.note : "")).slice(0, 200) }, after: () => markSub(s, "approved") });
+  } else await save(() => markSub(s, "approved"), "Marked as handled");
+}
+function rejectSub(id) {
+  const s = S.pending.find(x => x.id === id); if (!s) return;
+  openForm("Reject this update", [{ id: "note", label: "Reason (the driver will see this)", value: "", placeholder: "e.g. No payment with this code" }], async v => save(() => markSub(s, "rejected", v.note.slice(0, 200)), "Rejected"));
+}
+
+/* ============ Driver summaries (written by the family app, read by drivers) ============ */
+const hashStr = str => { let h = 5381; for (let i = 0; i < str.length; i++) h = ((h << 5) + h + str.charCodeAt(i)) | 0; return String(h >>> 0); };
+function buildSummary(d) {
+  const pays = all("payments").filter(p => p.driverId === d.id).sort((a, b) => b.date.localeCompare(a.date)).slice(0, 20).map(p => ({ date: p.date, amount: Number(p.amount) || 0, ref: p.ref || "" }));
+  const since = addDays(todayStr(), -60);
+  const chg = all("expenses").filter(x => x.chargeDriver && x.driverId === d.id && x.date >= since).sort((a, b) => b.date.localeCompare(a.date)).slice(0, 10).map(x => ({ date: x.date, category: x.category || "", amount: Number(x.amount) || 0, note: x.note || "" }));
+  return { driverId: d.id, name: d.name || "", bizName: S.settings.name || "Fleet Ledger", plate: d.assign ? carLabel(d.assign.carId) : "", rate: d.rate || 0, restDay: d.assign ? d.assign.restDay : "", balance: Math.round(d.balance), daysBehind: Math.round((d.daysBehind || 0) * 10) / 10, asOf: todayStr(), payments: pays, charges: chg };
+}
+let summaryBusy = false;
+async function syncSummaries() {
+  if (S.mode !== "family" || !S.canWrite || summaryBusy || !S.calc || !allConfirmed()) return;
+  const writes = [];
+  for (const d of S.calc.drivers) {
+    if (!d.loginEmail) continue;
+    const sum = buildSummary(d), hash = hashStr(JSON.stringify(sum));
+    if (S.summaries[d.id] && S.summaries[d.id].hash === hash) continue;
+    writes.push([d.id, { ...sum, hash, updatedAt: new Date().toISOString() }]);
+  }
+  if (!writes.length) return;
+  summaryBusy = true;
+  try {
+    for (const [id, data] of writes) {
+      S.summaries[id] = data; // avoid rewriting while the write is in flight
+      await Promise.race([S.db.collection("driverSummaries").doc(id).set(data), new Promise(r => setTimeout(r, 8000))]);
+    }
+  } catch (e) {} finally { summaryBusy = false; }
+}
+
+/* ============ Driver app ============ */
+function startDriver(db, id) {
+  if (S.db) return;
+  S.db = db; S.mode = "driver"; S.me = id;
+  document.querySelector("nav.tabs").style.display = "none";
+  document.getElementById("fab").style.display = "none";
+  const onErr = e => { setSync(e && e.code === "permission-denied" ? "No access" : "Data unavailable"); };
+  db.collection("driverSummaries").doc(id).onSnapshot(snap => { S.dsum = snap.exists ? snap.data() : null; S.dsumLoaded = true; setSync(snap.metadata.fromCache ? "Saved copy (offline)" : "Up to date"); renderDriver(); }, onErr);
+  db.collection("submissions").where("driverId", "==", id).onSnapshot(snap => { S.mySubs = snapRows(snap).sort((a, b) => String(b.createdAt || "").localeCompare(String(a.createdAt || ""))); renderDriver(); }, onErr);
+  renderDriver();
+}
+function renderDriver() {
+  const v = document.getElementById("view"), s = S.dsum;
+  document.getElementById("biz-name").textContent = (s && s.bizName) || "Fleet Ledger";
+  const subs = S.mySubs || [];
+  const waiting = subs.filter(x => x.status === "pending" && x.type === "payment").reduce((t, x) => t + (Number(x.amount) || 0), 0);
+  const subLine = x => {
+    const st = x.status === "approved" ? pill("good", "Approved") : x.status === "rejected" ? pill("bad", "Not approved") : pill("warn", "Waiting");
+    const what = x.type === "payment" ? `Payment ${ksh(x.amount)}${x.ref ? " · " + esc(x.ref) : ""}` : x.type === "mileage" ? `Mileage ${Number(x.km).toLocaleString()} km` : esc(x.issue) + (x.offRoad ? " · car can't work" : "");
+    return `<div class="li"><div class="main"><div class="t">${what}</div><div class="small muted">${fmtDate(x.date)}${x.reviewNote ? " · Office: " + esc(x.reviewNote) : ""}</div></div><div class="end">${st}</div></div>`;
+  };
+  let top;
+  if (!s) top = `<div class="card"><h2>Hi</h2><p class="muted">${S.dsumLoaded ? "Your account is ready. Your balance will appear here after the office next opens the records." : "Loading your balance…"}</p></div>`;
+  else {
+    const bal = s.balance;
+    const head = bal > 1 ? `You owe <span style="color:var(--bad)">${ksh(bal)}</span>` : bal < -1 ? `You are <span style="color:var(--good)">${ksh(-bal)}</span> in credit` : `<span style="color:var(--good)">You are fully paid up</span>`;
+    let upd = fmtDate(s.asOf); try { upd += ", " + new Date(s.updatedAt).toLocaleTimeString("en-KE", { timeZone: TZ, hour: "2-digit", minute: "2-digit" }); } catch (e) {}
+    top = `<div class="card"><div class="small muted">Hi ${esc(String(s.name).split(" ")[0])}</div><div class="kpi"><div class="value" style="font-size:26px">${head}</div></div>
+      <div class="small muted" style="margin-top:4px">${bal > 1 && s.daysBehind ? "About " + s.daysBehind + " days of payments · " : ""}Updated ${upd}</div>
+      ${waiting ? `<div class="small" style="margin-top:6px">${ksh(waiting)} you reported is waiting for the office to confirm.</div>` : ""}
+      <div class="detail-grid" style="margin-top:12px"><div><span>Car</span><b>${s.plate ? plate(s.plate) : "None"}</b></div><div><span>Daily rate</span><b>${s.rate ? ksh(s.rate) : "—"}</b></div><div><span>Rest day</span><b>${s.restDay === "" || s.restDay == null ? "None" : DAYS[s.restDay]}</b></div></div></div>`;
+  }
+  const big = (a, t, d) => `<button class="btn" data-action="${a}" style="justify-content:flex-start;flex-direction:column;align-items:flex-start;padding:14px;text-align:left"><span style="font-size:16px">${t}</span><span class="small muted" style="font-weight:400">${d}</span></button>`;
+  v.innerHTML = `<div class="section">${top}</div>
+  <div class="section"><h2>Send to the office</h2><div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(160px,1fr))">
+    ${big("drv-pay", "I've paid", "Send your M-Pesa code")}${big("drv-km", "Mileage", "Weekly odometer reading")}${big("drv-issue", "Report a problem", "Breakdown, accident, police")}
+  </div></div>
+  <div class="section"><h2>My updates</h2>${subs.length ? `<div class="list">${subs.slice(0, 15).map(subLine).join("")}</div>` : `<div class="card empty">Nothing sent yet.</div>`}</div>
+  ${s ? `<div class="section"><h2>Payments received</h2>${s.payments && s.payments.length ? `<div class="list">${s.payments.map(p => `<div class="li"><div class="main"><div class="t">${ksh(p.amount)}</div><div class="small muted">${fmtDate(p.date)}${p.ref ? " · " + esc(p.ref) : ""}</div></div></div>`).join("")}</div>` : `<div class="card empty">No payments recorded yet.</div>`}</div>
+  ${s.charges && s.charges.length ? `<div class="section"><h2>Charges</h2><div class="list">${s.charges.map(x => `<div class="li"><div class="main"><div class="t">${esc(x.category)}</div><div class="small muted">${fmtDate(x.date)}${x.note ? " · " + esc(x.note) : ""}</div></div><div class="end"><b class="num">${ksh(x.amount)}</b></div></div>`).join("")}</div></div>` : ""}` : ""}
+  <div class="small muted">Something looks wrong? Talk to the office. Paid in cash? Tell the office directly.</div>`;
+}
+function submitReq(type, data) {
+  return save(() => S.db.collection("submissions").doc().set({ driverId: S.me, type, status: "pending", createdAt: new Date().toISOString(), ...data }), "Sent to the office");
+}
+function drvPay() {
+  openForm("I've paid", [
+    { id: "amount", label: "Amount (KSh)", type: "number", value: S.dsum && S.dsum.rate ? S.dsum.rate : "", required: true, half: true },
+    { id: "date", label: "Date paid", type: "date", value: todayStr(), half: true },
+    { id: "ref", label: "M-Pesa code", placeholder: "e.g. TKG7H2XQ1P", hint: "Copy it from the M-Pesa confirmation SMS" },
+    { id: "note", label: "Note (optional)" }
+  ], async v => {
+    if (!(v.amount > 0)) return "Enter the amount you paid";
+    if (!v.date || v.date > todayStr()) return "Check the date";
+    v.ref = v.ref.toUpperCase().replace(/\s/g, "");
+    if (!/^[A-Z0-9]{8,12}$/.test(v.ref)) return "Enter the M-Pesa code from the SMS (10 letters and numbers)";
+    if ((S.mySubs || []).some(x => x.type === "payment" && x.ref === v.ref && x.status !== "rejected")) return "You already sent this code";
+    return submitReq("payment", { amount: v.amount, date: v.date, ref: v.ref, note: v.note.slice(0, 300) });
+  });
+}
+function drvKm() {
+  openForm("Send mileage", [
+    { id: "km", label: "Odometer reading (km)", type: "number", required: true, half: true },
+    { id: "date", label: "Date", type: "date", value: todayStr(), half: true }
+  ], async v => {
+    if (!(v.km > 0)) return "Enter the reading on the dashboard";
+    if (!v.date || v.date > todayStr()) return "Check the date";
+    return submitReq("mileage", { km: v.km, date: v.date });
+  }, { intro: "Read the total kilometres on the dashboard and type them in. Send it every Monday." });
+}
+function drvIssue() {
+  openForm("Report a problem", [
+    { id: "issue", label: "What happened", type: "select", options: ISSUES, value: ISSUES[0] },
+    { id: "offRoad", label: "The car can't work", type: "check", value: false, hint: "Tick if the car is off the road" },
+    { id: "date", label: "Date", type: "date", value: todayStr() },
+    { id: "note", label: "Details", type: "textarea", placeholder: "Where is the car? What do you need?" }
+  ], async v => {
+    if (!v.date || v.date > todayStr()) return "Check the date";
+    if (!v.note) return "Add a few details for the office";
+    return submitReq("issue", { issue: v.issue, offRoad: !!v.offRoad, date: v.date, note: v.note.slice(0, 500) });
+  });
+}
+
+
+/* ============ Settle and close a driver ============ */
+function lastAssign(id) { return S.assigns.filter(a => a.driverId === id).sort((a, b) => b.start.localeCompare(a.start))[0]; }
+function startSettle(id) {
+  const d = driverById(id); if (!d) return;
+  const open = S.assigns.find(a => a.driverId === id && (!a.end || a.end >= todayStr()));
+  if (open) {
+    openForm(`Settle ${d.name}: last working day`, [
+      { id: "end", label: "Last day the driver had the car", type: "date", value: addDays(todayStr(), -1), required: true }
+    ], async v => {
+      if (!v.end || v.end < open.start) return "The last day can't be before the assignment started (" + fmtDate(open.start) + ")";
+      const ok = await save(() => S.db.collection("assignments").doc(open.id).update({ end: v.end }), "Assignment ended");
+      if (ok) setTimeout(() => openSettle(id), 500);
+      return ok;
+    }, { intro: `${esc(d.name)} still has ${plate(carLabel(open.carId))}. First end the assignment so no more daily rates are charged. The car will show as having no driver until you assign someone else.` });
+    return;
+  }
+  openSettle(id);
+}
+function openSettle(id) {
+  S.calc = compute();
+  const d = S.calc.drivers.find(x => x.id === id); if (!d) return;
+  const rec = driverById(id), dep = Number(rec.deposit) || 0, bal = Math.round(d.balance);
+  const hasHistory = S.assigns.some(a => a.driverId === id);
+  const T = todayStr();
+  const fields = [
+    { id: "date", label: "Settlement date", type: "date", value: T < trackStart() ? trackStart() : T, half: true, min: trackStart() },
+    { id: "how", label: "Paid / refunded by", type: "select", options: ["M-Pesa", "Cash", "Bank"], value: "M-Pesa", half: true },
+    { id: "useDeposit", label: `Use the deposit (${ksh(dep)}) against the balance`, type: "check", value: dep > 0, hint: dep > 0 ? "The deposit counts as money you keep. If the driver is in credit, it is refunded together with the credit." : "No deposit is recorded for this driver." },
+    { id: "outcome", label: "What happens to the rest", type: "select", options: [["keep", "Leave the balance open"]], value: "keep" },
+    { id: "note", label: "Note", value: "" }
+  ];
+  const netOf = v => bal - (v.useDeposit ? dep : 0);
+  const optsFor = net => net > 1 ? [["collect", "Driver pays it now"], ["writeoff", "Write it off (won't be collected)"], ["keep", "Leave it open as a debt"]]
+    : net < -1 ? [["refund", "Refund the driver now"], ["keep", "Leave it open as a credit"]] : [["none", "Nothing left: close the account"]];
+  const summary = v => {
+    const net = netOf(v);
+    const line = (l, x, strong) => `<div style="display:flex;justify-content:space-between;gap:10px"><span>${l}</span><b class="num" style="${strong ? "font-size:16px" : "font-weight:600"}">${x}</b></div>`;
+    return `<div class="card" style="display:grid;gap:6px;background:var(--bg)">
+      ${line("Balance now", bal > 1 ? ksh(bal) + " owed" : bal < -1 ? ksh(-bal) + " credit" : "KSh 0")}
+      ${v.useDeposit && dep ? line("Deposit kept", "− " + ksh(dep)) : ""}
+      ${line(net > 1 ? "Driver still owes" : net < -1 ? "You owe the driver" : "Left to settle", ksh(Math.abs(net)), true)}
+    </div>${!hasHistory ? `<div class="err" style="margin-top:8px">This driver has never been assigned to a car, so no daily rates were charged and every payment shows as credit. Add his past assignment (car, rate, start and end dates) before settling.</div>` : bal < -1 ? `<div class="small muted" style="margin-top:8px">Credit often means the assignment dates are wrong. Check them under Cars driven before refunding.</div>` : ""}`;
+  };
+  openForm(`Settle and close: ${d.name}`, fields, async v => {
+    const net = netOf(v), car = (lastAssign(id) || {}).carId || "";
+    const valid = optsFor(net).map(o => o[0]); if (!valid.includes(v.outcome)) v.outcome = valid[0];
+    if (!v.date) return "Choose the settlement date";
+    const recs = [];
+    if (v.useDeposit && dep) recs.push({ date: v.date, driverId: id, carId: car, amount: dep, method: "Deposit", ref: "", note: "Deposit kept at settlement" });
+    let summaryText = "";
+    if (v.outcome === "collect") { recs.push({ date: v.date, driverId: id, carId: car, amount: net, method: v.how === "M-Pesa" ? "M-Pesa Till" : v.how, ref: "", note: "Final payment at settlement" }); summaryText = `final payment ${ksh(net)}`; }
+    else if (v.outcome === "refund") { recs.push({ date: v.date, driverId: id, carId: car, amount: net, method: "Refund", ref: "", note: `Refunded by ${v.how} at settlement` }); summaryText = `refunded ${ksh(-net)}`; }
+    else if (v.outcome === "writeoff") summaryText = `wrote off ${ksh(net)}`;
+    else if (v.outcome === "keep") summaryText = net > 1 ? `${ksh(net)} still owed` : `${ksh(-net)} credit left open`;
+    else summaryText = "nothing left to pay";
+    if (v.useDeposit && dep) summaryText = `deposit ${ksh(dep)} kept, ` + summaryText;
+    const adjustments = (Array.isArray(rec.adjustments) ? rec.adjustments : []).concat(v.outcome === "writeoff" ? [{ date: v.date, amount: net, note: "Written off at settlement" + (v.note ? " · " + v.note : "") }] : []);
+    const ok = await save(async () => {
+      for (const r of recs) await writeRecord("payments", r);
+      await S.db.collection("drivers").doc(id).update({ status: "left", leftDate: (lastAssign(id) || {}).end || v.date, deposit: v.useDeposit ? 0 : dep, adjustments, loginEmail: "", settlement: { date: v.date, summary: summaryText + (v.note ? " · " + v.note : ""), by: (S.user && S.user.email) || "" }, updatedAt: new Date().toISOString() });
+      if (rec.loginEmail) await S.db.collection("driverLogins").doc(String(rec.loginEmail).toLowerCase()).delete();
+    }, "Driver settled and closed");
+    if (ok && rec.loginEmail) setTimeout(() => toast("Also delete " + rec.loginEmail + " in Firebase > Authentication"), 3000);
+    return ok;
+  }, {
+    intro: `<span id="settle-sum">${summary({ useDeposit: dep > 0 })}</span>`,
+    onChange: (e, v) => { document.getElementById("settle-sum").innerHTML = summary(v); syncOutcome(v); }
+  });
+  const syncOutcome = v => { const sel = document.getElementById("f-outcome"); const opts = optsFor(netOf(v)); const cur = sel.value; sel.innerHTML = opts.map(([k, l]) => `<option value="${k}" ${k === cur ? "selected" : ""}>${esc(l)}</option>`).join(""); };
+  syncOutcome({ useDeposit: dep > 0 });
+}
+
 /* ============ Events ============ */
 function toast(t) { const el = document.getElementById("toast"); el.textContent = t; el.style.display = "block"; clearTimeout(toast._t); toast._t = setTimeout(() => el.style.display = "none", 2800); }
 
@@ -1168,7 +1434,7 @@ document.addEventListener("click", async e => {
     case "more-tab": S.moreTab = v; render(); break;
     case "go": S.detail = null; location.hash = v; break;
     case "back": S.detail = null; render(); break;
-    case "open": { const [k, id] = v.split(":"); S.detail = v; closeSheet(); const tab = k === "car" ? "cars" : "drivers"; if (location.hash !== "#" + tab) location.hash = tab; else render(); window.scrollTo(0, 0); break; }
+    case "open": { const [k, id] = v.split(":"); if (k === "go") { closeSheet(); S.detail = null; location.hash = id; break; } S.detail = v; closeSheet(); const tab = k === "car" ? "cars" : "drivers"; if (location.hash !== "#" + tab) location.hash = tab; else render(); window.scrollTo(0, 0); break; }
     case "close": closeSheet(); break;
     case "quick-add": quickAdd(); break;
     case "new-payment": formPayment(v); break;
@@ -1188,6 +1454,12 @@ document.addEventListener("click", async e => {
     case "form-delete": if (el.dataset.confirm) { const r = await FORM.onDelete(); if (r !== false) closeSheet(); } else { el.dataset.confirm = "1"; el.textContent = "Tap again to delete"; } break;
     case "imp-reset": if (IMP) { IMP = null; render(); } else { location.hash = "more"; } break;
     case "imp-go": runImport(); break;
+    case "sub-ok": approveSub(v); break;
+    case "settle": startSettle(v); break;
+    case "sub-no": rejectSub(v); break;
+    case "drv-pay": drvPay(); break;
+    case "drv-km": drvKm(); break;
+    case "drv-issue": drvIssue(); break;
     case "signout": firebase.auth().signOut().then(() => location.reload()); break;
     case "reset-pass": { const em = document.getElementById("login-email").value.trim(); if (!em) { document.getElementById("login-err").textContent = "Type your email first, then tap Forgot password."; break; } try { await firebase.auth().sendPasswordResetEmail(em); document.getElementById("login-err").textContent = "Password reset email sent to " + em; } catch (er) { document.getElementById("login-err").textContent = authMsg(er); } break; }
   }
